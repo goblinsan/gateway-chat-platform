@@ -1,0 +1,15 @@
+{
+  "name": "@gateway/shared",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vitest": "^1.4.0"
+  }
+}
