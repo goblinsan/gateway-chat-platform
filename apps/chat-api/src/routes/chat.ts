@@ -12,16 +12,18 @@ const bodySchema = {
   type: 'object',
   required: ['agentId', 'messages'],
   properties: {
-    agentId: { type: 'string' },
-    threadId: { type: 'string' },
+    agentId: { type: 'string', minLength: 1, maxLength: 64 },
+    threadId: { type: 'string', maxLength: 64 },
     messages: {
       type: 'array',
+      minItems: 1,
+      maxItems: 100,
       items: {
         type: 'object',
         required: ['role', 'content'],
         properties: {
           role: { type: 'string', enum: ['user', 'assistant'] },
-          content: { type: 'string' },
+          content: { type: 'string', minLength: 1, maxLength: 32768 },
         },
       },
     },
@@ -34,7 +36,10 @@ const bodySchema = {
 export default async function chatRoutes(app: FastifyInstance) {
   app.post<{ Body: AgentChatRequest & { threadId?: string } }>(
     '/chat',
-    { schema: { body: bodySchema } },
+    {
+      schema: { body: bodySchema },
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
     async (req, reply) => {
       const { agentId, messages, threadId } = req.body
 
@@ -137,7 +142,10 @@ export default async function chatRoutes(app: FastifyInstance) {
    */
   app.post<{ Body: AgentChatRequest & { threadId?: string } }>(
     '/chat/stream',
-    { schema: { body: bodySchema } },
+    {
+      schema: { body: bodySchema },
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
     async (req, reply) => {
       const { agentId, messages, threadId } = req.body
 

@@ -19,6 +19,14 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   GOOGLE_API_KEY: z.string().optional(),
 
+  // Allowed CORS origins (comma-separated list, e.g. https://chat.yourdomain.com)
+  // If empty, all origins are allowed in development and none in production.
+  ALLOWED_ORIGINS: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.split(',').map((s) => s.trim()).filter(Boolean) : []))
+    .default(''),
+
   // Cloudflare Access
   CF_ACCESS_TEAM_DOMAIN: z.string().optional(),
   CF_ACCESS_AUD: z.string().optional(),

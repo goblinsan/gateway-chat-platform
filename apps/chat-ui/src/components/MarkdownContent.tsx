@@ -9,6 +9,23 @@ interface Props {
   content: string
 }
 
+/**
+ * Sanitize a URL to prevent XSS via javascript:/data:/vbscript: hrefs.
+ * Returns the href unchanged if it uses a safe scheme, otherwise returns '#'.
+ */
+function sanitizeHref(href: string | undefined): string {
+  if (!href) return '#'
+  const trimmed = href.trim().toLowerCase()
+  if (
+    trimmed.startsWith('javascript:') ||
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('vbscript:')
+  ) {
+    return '#'
+  }
+  return href
+}
+
 const markdownComponents: Components = {
   // Override `pre` to avoid double-wrapping: when a `code` block is detected and
   // SyntaxHighlighter is rendered (which generates its own <pre>), react-markdown
@@ -58,7 +75,7 @@ const markdownComponents: Components = {
   a({ children, href }) {
     return (
       <a
-        href={href}
+        href={sanitizeHref(href)}
         target="_blank"
         rel="noopener noreferrer"
         className="text-blue-400 underline hover:text-blue-300"

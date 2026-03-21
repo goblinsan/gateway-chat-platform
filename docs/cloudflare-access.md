@@ -1,6 +1,6 @@
 # Cloudflare Access Configuration
 
-This document describes how to protect the `chat.yourdomain.com` hostname using Cloudflare Access.
+This document describes how to protect the `chat.yourdomain.com` hostname using Cloudflare Access and how to lock down origin access so that only Cloudflare traffic can reach the servers.
 
 ## Prerequisites
 
@@ -45,22 +45,36 @@ Add the following to your `chat-api` environment (`.env` or deployment secrets):
 ```env
 CF_ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
 CF_ACCESS_AUD=<Application Audience Tag from the Access application>
+
+# Restrict CORS to your chat domain only (comma-separated for multiple origins)
+ALLOWED_ORIGINS=https://chat.yourdomain.com
 ```
 
 The `CF_ACCESS_AUD` (audience tag) is shown on the Access application overview page.
 
 ## 5. Token Validation (Backend)
 
-The `chat-api` can validate the `CF_Authorization` JWT sent by Cloudflare Access using the
-public JWKS endpoint:
+When `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` are configured the `chat-api` automatically
+validates the `CF-Access-Jwt-Assertion` JWT header on all **admin** endpoints
+(`/api/admin/*`) using the public JWKS endpoint:
 
 ```
 https://<CF_ACCESS_TEAM_DOMAIN>/cdn-cgi/access/certs
 ```
 
-Use a library such as `jose` (Node.js) to verify the token on protected endpoints.
+Requests to admin routes that are missing or carry an invalid token receive a **401** response.
 
-## 6. Testing the Flow
+## 6. Origin IP Allowlisting (Nginx)
+
+The `infra/nginx/nginx.conf` configuration restricts incoming connections to the published
+[Cloudflare IP ranges](https://www.cloudflare.com/ips/). Any request that does not originate
+from a Cloudflare edge node receives a **403** response before it reaches the application.
+
+Keep the IP list up to date by periodically comparing it against:
+- <https://www.cloudflare.com/ips-v4>
+- <https://www.cloudflare.com/ips-v6>
+
+## 7. Testing the Flow
 
 1. Open an incognito/private browser window.
 2. Navigate to `https://chat.yourdomain.com`.
@@ -68,7 +82,8 @@ Use a library such as `jose` (Node.js) to verify the token on protected endpoint
 4. Authenticate with the configured identity provider.
 5. After successful login, you are redirected back to the chat UI.
 
-## 7. Bypass for API Health Checks
+## 8. Bypass for API Health Checks
 
 If your load balancer health checks need to reach `/api/health` without authentication,
 add a second Access policy with **Action = Bypass** scoped to the path `/api/health`.
+
