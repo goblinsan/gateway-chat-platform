@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { AgentListItem } from '@gateway/shared'
 import type { ChatThread, ThreadMessage, MessageMeta } from '../types/chat'
 import type { AgentStreamDoneEvent } from '@gateway/shared'
@@ -39,7 +39,7 @@ export default function ChatPage({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const activeThread = threads.find((t) => t.id === activeThreadId)
-  const messages = activeThread?.messages ?? []
+  const messages = useMemo(() => activeThread?.messages ?? [], [activeThread])
 
   // Auto-scroll to bottom during streaming and when messages change
   useEffect(() => {
@@ -80,9 +80,10 @@ export default function ChatPage({
         const decoder = new TextDecoder()
         let buffer = ''
 
-        while (true) {
+        let reading = true
+        while (reading) {
           const { done, value } = await reader.read()
-          if (done) break
+          if (done) { reading = false; break }
           buffer += decoder.decode(value, { stream: true })
           const lines = buffer.split('\n')
           buffer = lines.pop() ?? ''
