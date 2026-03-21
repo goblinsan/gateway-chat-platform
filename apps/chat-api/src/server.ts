@@ -2,6 +2,8 @@ import Fastify from 'fastify'
 import { loadEnv } from './config/env'
 import healthRoutes from './routes/health'
 import providerRoutes from './routes/providers'
+import agentRoutes from './routes/agents'
+import chatRoutes from './routes/chat'
 
 async function bootstrap() {
   const env = loadEnv()
@@ -26,6 +28,8 @@ async function bootstrap() {
   // Routes
   await app.register(healthRoutes, { prefix: '/api' })
   await app.register(providerRoutes, { prefix: '/api' })
+  await app.register(agentRoutes, { prefix: '/api' })
+  await app.register(chatRoutes, { prefix: '/api' })
 
   // Root
   app.get('/', async () => ({ name: 'gateway-chat-api', version: env.BUILD_VERSION }))
