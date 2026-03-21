@@ -1,20 +1,20 @@
 import type { FastifyInstance } from 'fastify'
 import { getEnv } from '../config/env'
 import { checkProvider } from '../services/providerCheck'
+import { type KnownProviderName } from '../config/providers'
 
 interface ProviderTestResult {
   name: string
   status: 'ok' | 'error' | 'unconfigured'
   latencyMs?: number
   error?: string
-  baseUrl?: string
 }
 
 export default async function providerRoutes(app: FastifyInstance) {
   app.get('/providers/status', async (_req, reply) => {
     const env = getEnv()
 
-    const providers: Array<{ name: string; baseUrl?: string; apiKey?: string }> = [
+    const providers: Array<{ name: KnownProviderName; baseUrl?: string; apiKey?: string }> = [
       { name: 'lm-studio-a', baseUrl: env.LM_STUDIO_A_BASE_URL },
       { name: 'lm-studio-b', baseUrl: env.LM_STUDIO_B_BASE_URL },
       { name: 'openai', apiKey: env.OPENAI_API_KEY, baseUrl: 'https://api.openai.com' },
@@ -30,7 +30,9 @@ export default async function providerRoutes(app: FastifyInstance) {
         continue
       }
       const check = await checkProvider(p.name, p.baseUrl ?? '', p.apiKey)
-      results.push({ name: p.name, baseUrl: p.baseUrl, ...check })
+      // baseUrl is intentionally omitted from the response to avoid leaking
+      // internal infrastructure details to the browser (#55)
+      results.push({ name: p.name, ...check })
     }
 
     return reply.send({ providers: results })
@@ -58,6 +60,7 @@ export default async function providerRoutes(app: FastifyInstance) {
     }
 
     const result = await checkProvider(name, provider.baseUrl ?? '', provider.apiKey)
-    return reply.send({ name, baseUrl: provider.baseUrl, ...result })
+    // baseUrl is intentionally omitted from the response (#55)
+    return reply.send({ name, ...result })
   })
 }

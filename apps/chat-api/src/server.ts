@@ -7,8 +7,12 @@ import providerRoutes from './routes/providers'
 import agentRoutes from './routes/agents'
 import chatRoutes from './routes/chat'
 import adminRoutes from './routes/admin'
+import cfAccessPlugin from './plugins/cfAccess'
 import { getPrismaClient } from './services/db'
 import { scheduleRetentionCleanup } from './services/retention'
+
+// Max request body size: 64 KB — prevents oversized prompt submissions (#59)
+const BODY_LIMIT = 64 * 1024
 
 async function bootstrap() {
   const env = loadEnv()
@@ -36,13 +40,31 @@ async function bootstrap() {
     loggerOptions['transport'] = { target: 'pino-pretty', options: { colorize: true } }
   }
 
-  const app = Fastify({ logger: loggerOptions })
+  const app = Fastify({ logger: loggerOptions, bodyLimit: BODY_LIMIT })
+
+  // Determine allowed CORS origins: explicit list, or fallback based on environment (#54)
+  const corsOrigin =
+    env.ALLOWED_ORIGINS.length > 0
+      ? env.ALLOWED_ORIGINS
+      : env.NODE_ENV !== 'production'
 
   // Security plugins
   await app.register(import('@fastify/helmet'))
   await app.register(import('@fastify/cors'), {
-    origin: env.NODE_ENV === 'production' ? false : true,
+    origin: corsOrigin,
     credentials: true,
+  })
+
+  // Rate limiting — global defaults (#58)
+  await app.register(import('@fastify/rate-limit'), {
+    global: true,
+    max: 100,
+    timeWindow: '1 minute',
+    errorResponseBuilder: (_req, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded. Try again in ${Math.ceil(context.ttl / 1000)}s`,
+    }),
   })
 
   // Routes
@@ -50,7 +72,12 @@ async function bootstrap() {
   await app.register(providerRoutes, { prefix: '/api' })
   await app.register(agentRoutes, { prefix: '/api' })
   await app.register(chatRoutes, { prefix: '/api' })
-  await app.register(adminRoutes, { prefix: '/api' })
+
+  // Admin routes are protected by Cloudflare Access JWT validation (#62)
+  await app.register(async (adminApp) => {
+    await adminApp.register(cfAccessPlugin)
+    await adminApp.register(adminRoutes, { prefix: '/api' })
+  })
 
   // Root
   app.get('/', async () => ({ name: 'gateway-chat-api', version: env.BUILD_VERSION }))
