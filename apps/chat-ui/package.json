@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@gateway/shared": "workspace:*",
     "@tanstack/react-query": "^5.28.4",
     "axios": "^1.6.8",
     "react": "^18.2.0",
