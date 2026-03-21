@@ -7,6 +7,11 @@ import providerRoutes from './routes/providers'
 import agentRoutes from './routes/agents'
 import chatRoutes from './routes/chat'
 import adminRoutes from './routes/admin'
+import filesRoutes from './routes/files'
+import compareRoutes from './routes/compare'
+import promptsRoutes from './routes/prompts'
+import handoffRoutes from './routes/handoff'
+import workflowsRoutes from './routes/workflows'
 import cfAccessPlugin from './plugins/cfAccess'
 import { getPrismaClient } from './services/db'
 import { scheduleRetentionCleanup } from './services/retention'
@@ -72,6 +77,11 @@ async function bootstrap() {
   await app.register(providerRoutes, { prefix: '/api' })
   await app.register(agentRoutes, { prefix: '/api' })
   await app.register(chatRoutes, { prefix: '/api' })
+  await app.register(filesRoutes, { prefix: '/api' })
+  await app.register(compareRoutes, { prefix: '/api' })
+  await app.register(promptsRoutes, { prefix: '/api' })
+  await app.register(handoffRoutes, { prefix: '/api' })
+  await app.register(workflowsRoutes, { prefix: '/api' })
 
   // Admin routes are protected by Cloudflare Access JWT validation (#62)
   await app.register(async (adminApp) => {

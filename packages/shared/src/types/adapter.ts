@@ -10,6 +10,7 @@ export interface ChatRequest {
   messages: ProviderMessage[]
   temperature?: number
   maxTokens?: number
+  tools?: ToolDefinition[]
 }
 
 // Normalized token usage (Issue #15)
@@ -52,6 +53,18 @@ export interface ConnectionResult {
 }
 
 // Provider adapter interface (Issue #12)
+export interface ToolDefinition {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
+
+export interface ToolCall {
+  name: string
+  arguments: Record<string, unknown>
+  result?: string
+}
+
 export interface ProviderAdapter {
   readonly name: string
   sendChat(request: ChatRequest): Promise<ChatResponse>

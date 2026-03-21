@@ -3,10 +3,16 @@ import type { AgentListItem } from '@gateway/shared'
 import type { ChatThread, ThreadMessage, MessageMeta } from '../types/chat'
 import type { AgentStreamDoneEvent } from '@gateway/shared'
 import MessageBubble from '../components/MessageBubble'
+import ComparePanel from '../components/ComparePanel'
+import HandoffModal from '../components/HandoffModal'
+import PromptLibrary from '../components/PromptLibrary'
+import FileAttachment from '../components/FileAttachment'
+import MicButton from '../components/SpeechControls'
 
 interface ChatPageProps {
   activeAgentId: string
   activeAgent: AgentListItem | undefined
+  agents: AgentListItem[]
   threads: ChatThread[]
   activeThreadId: string | null
   onSetActiveThreadId: (id: string | null) => void
@@ -24,6 +30,7 @@ type SSEEvent =
 export default function ChatPage({
   activeAgentId,
   activeAgent,
+  agents,
   threads,
   activeThreadId,
   onSetActiveThreadId,
@@ -35,6 +42,11 @@ export default function ChatPage({
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
+  const [compareMode, setCompareMode] = useState(false)
+  const [compareResults, setCompareResults] = useState<Array<{ provider: string; model: string; content: string; latencyMs: number; error?: string }>>([])
+  const [compareLoading, setCompareLoading] = useState(false)
+  const [showHandoff, setShowHandoff] = useState(false)
+  const [showPromptLibrary, setShowPromptLibrary] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -52,6 +64,11 @@ export default function ChatPage({
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [])
+
+  const toggleCompareMode = useCallback(() => {
+    setCompareMode((v) => !v)
+    setCompareResults([])
   }, [])
 
   const doStream = useCallback(
@@ -101,6 +118,7 @@ export default function ChatPage({
                   usedProvider: event.usedProvider,
                   latencyMs: event.latencyMs,
                   usage: event.usage,
+                  routingExplanation: event.routingExplanation,
                 })
               } else if (event.type === 'error') {
                 onUpdateLastAssistantMessage(threadId, `⚠️ ${event.error}`)
@@ -204,6 +222,47 @@ export default function ChatPage({
     [activeThreadId, activeAgentId, isStreaming, threads, onSetThreadMessages, doStream],
   )
 
+  const handleCompare = useCallback(async (): Promise<void> => {
+    const trimmed = input.trim()
+    if (!trimmed || isStreaming) return
+
+    setCompareLoading(true)
+    setCompareResults([])
+    try {
+      const res = await fetch('/api/chat/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: trimmed }] }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { results: Array<{ provider: string; model: string; content: string; latencyMs: number; error?: string }> }
+        setCompareResults(data.results)
+      }
+    } catch (err) {
+      console.warn('[ChatPage] Compare failed:', err)
+    } finally {
+      setCompareLoading(false)
+    }
+  }, [input, isStreaming])
+
+  const handleHandoffConfirm = useCallback(async (toAgentId: string): Promise<void> => {
+    if (!activeThreadId || !activeAgentId) return
+    const thread = threads.find((t) => t.id === activeThreadId)
+    if (!thread) return
+
+    const messagesToSend = thread.messages.map((m) => ({ role: m.role, content: m.content }))
+    try {
+      await fetch('/api/chat/handoff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromAgentId: activeAgentId, toAgentId, messages: messagesToSend }),
+      })
+    } catch (err) {
+      console.warn('[ChatPage] Handoff failed:', err)
+    }
+    setShowHandoff(false)
+  }, [activeThreadId, activeAgentId, threads])
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -244,11 +303,25 @@ export default function ChatPage({
               )}
             </p>
           </div>
+          {activeThreadId && messages.length > 0 && (
+            <button
+              onClick={() => setShowHandoff(true)}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+              title="Hand off conversation"
+            >
+              🔄 Hand off
+            </button>
+          )}
         </header>
       ) : (
         <header className="flex-shrink-0 border-b border-gray-800 px-6 py-3 text-sm text-gray-500 bg-gray-900">
           Select an agent to begin
         </header>
+      )}
+
+      {/* Compare results panel */}
+      {compareMode && (
+        <ComparePanel results={compareResults} isLoading={compareLoading} />
       )}
 
       {/* Message list */}
@@ -289,6 +362,26 @@ export default function ChatPage({
 
       {/* Input bar */}
       <footer className="flex-shrink-0 border-t border-gray-800 p-4 bg-gray-950">
+        <div className="flex items-center gap-2 mb-2">
+          <FileAttachment threadId={activeThreadId} />
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setShowPromptLibrary((v) => !v)}
+            className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded hover:bg-gray-800 transition-colors"
+            title="Prompt library"
+          >
+            📚
+          </button>
+          <button
+            type="button"
+            onClick={toggleCompareMode}
+            className={`text-xs px-2 py-1 rounded transition-colors ${compareMode ? 'bg-indigo-700 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
+            title="Compare mode"
+          >
+            ⊞ Compare
+          </button>
+        </div>
         <div className="flex gap-3 items-end">
           <textarea
             ref={textareaRef}
@@ -306,21 +399,48 @@ export default function ChatPage({
             disabled={!activeAgentId || isStreaming}
             style={{ maxHeight: '160px' }}
           />
-          <button
-            onClick={() => { void handleSend() }}
-            disabled={!input.trim() || !activeAgentId || isStreaming}
-            className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
-          >
-            {isStreaming ? (
-              <span className="animate-pulse">…</span>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-              </svg>
-            )}
-          </button>
+          <MicButton onResult={(text) => setInput((prev) => prev + text)} disabled={!activeAgentId || isStreaming} />
+          {compareMode ? (
+            <button
+              onClick={() => { void handleCompare() }}
+              disabled={!input.trim() || !activeAgentId || compareLoading}
+              className="px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+            >
+              {compareLoading ? <span className="animate-pulse">…</span> : '⊞'}
+            </button>
+          ) : (
+            <button
+              onClick={() => { void handleSend() }}
+              disabled={!input.trim() || !activeAgentId || isStreaming}
+              className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+            >
+              {isStreaming ? (
+                <span className="animate-pulse">…</span>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
+              )}
+            </button>
+          )}
         </div>
       </footer>
+
+      {showHandoff && activeAgent && (
+        <HandoffModal
+          currentAgentId={activeAgentId}
+          agents={agents}
+          onConfirm={(toAgentId) => { void handleHandoffConfirm(toAgentId) }}
+          onClose={() => setShowHandoff(false)}
+        />
+      )}
+
+      {showPromptLibrary && (
+        <PromptLibrary
+          onUse={(prompt) => setInput((prev) => prev + prompt)}
+          onClose={() => setShowPromptLibrary(false)}
+        />
+      )}
     </main>
   )
 }

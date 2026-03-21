@@ -32,6 +32,9 @@ export default function AgentTabs({ agents, activeAgentId, onSelect }: AgentTabs
           >
             <span aria-hidden="true">{agent.icon}</span>
             <span>{agent.name}</span>
+            {agent.id === 'auto-router' && (
+              <span className="text-xs font-bold px-1 py-0.5 rounded bg-indigo-600 text-white leading-none">Auto</span>
+            )}
           </button>
         )
       })}

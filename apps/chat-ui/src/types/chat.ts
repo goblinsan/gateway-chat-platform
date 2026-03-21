@@ -20,4 +20,11 @@ export interface MessageMeta {
   latencyMs?: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
   costClass?: string
+  toolsAvailable?: string[]
+  routingExplanation?: {
+    selectedProvider: string
+    reason: string
+    orderedChain: string[]
+    policyMatches: string[]
+  }
 }

@@ -8,6 +8,7 @@ import HealthPage from './pages/HealthPage'
 import AdminPage from './pages/AdminPage'
 import Sidebar from './components/Sidebar'
 import AgentTabs from './components/AgentTabs'
+import WorkflowPanel from './components/WorkflowPanel'
 import { useThreads } from './hooks/useThreads'
 
 function ChatLayout() {
@@ -18,6 +19,7 @@ function ChatLayout() {
   const agents = useMemo<AgentListItem[]>(() => data?.agents ?? [], [data])
 
   const [activeAgentId, setActiveAgentId] = useState<string>('')
+  const [showWorkflows, setShowWorkflows] = useState(false)
 
   const {
     threads,
@@ -70,6 +72,7 @@ function ChatLayout() {
         onSelectThread={handleSelectThread}
         onNewChat={handleNewChat}
         onDeleteThread={deleteThread}
+        onWorkflows={() => setShowWorkflows((v) => !v)}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {isLoading ? (
@@ -86,6 +89,7 @@ function ChatLayout() {
         <ChatPage
           activeAgentId={activeAgentId}
           activeAgent={activeAgent}
+          agents={agents}
           threads={threads}
           activeThreadId={activeThreadId}
           onSetActiveThreadId={setActiveThreadId}
@@ -94,6 +98,9 @@ function ChatLayout() {
           onUpdateLastAssistantMessage={updateLastAssistantMessage}
           onSetThreadMessages={setThreadMessages}
         />
+        {showWorkflows && (
+          <WorkflowPanel agents={agents} onClose={() => setShowWorkflows(false)} />
+        )}
       </div>
     </div>
   )

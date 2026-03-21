@@ -53,6 +53,14 @@ export interface AgentChatResponse {
   }
   latencyMs?: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  routingExplanation?: RoutingExplanation
+}
+
+export interface RoutingExplanation {
+  selectedProvider: string
+  reason: string
+  orderedChain: string[]
+  policyMatches: string[]
 }
 
 /** SSE done event emitted by POST /api/chat/stream */
@@ -63,4 +71,47 @@ export interface AgentStreamDoneEvent {
   usedProvider: string
   latencyMs: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  routingExplanation?: RoutingExplanation
+}
+
+export interface CompareRequest {
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  providerIds?: string[]
+}
+
+export interface CompareResult {
+  provider: string
+  model: string
+  content: string
+  latencyMs: number
+  error?: string
+}
+
+export interface CompareResponse {
+  results: CompareResult[]
+}
+
+export interface PromptItem {
+  id: string
+  title: string
+  category: string
+  prompt: string
+  tags: string[]
+}
+
+export interface PromptsListResponse {
+  prompts: PromptItem[]
+}
+
+export interface HandoffRequest {
+  fromAgentId: string
+  toAgentId: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  context?: string
+}
+
+export interface HandoffResponse {
+  toAgentId: string
+  threadContext: Array<{ role: string; content: string }>
+  handoffNote: string
 }
