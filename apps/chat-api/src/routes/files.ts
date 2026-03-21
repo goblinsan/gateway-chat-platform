@@ -15,7 +15,9 @@ interface FileRecord extends FileMetadata {
 
 const fileStore = new Map<string, FileRecord[]>()
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
+// MAX_FILE_SIZE is enforced against the reported `size` field (original bytes).
+// The base64-encoded `content` field will be ~33% larger than this limit.
+const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB (original file size)
 // Max files stored per thread to prevent unbounded memory growth
 const MAX_FILES_PER_THREAD = 20
 

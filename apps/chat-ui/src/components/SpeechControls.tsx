@@ -1,26 +1,17 @@
 import { useCallback, useRef, useState } from 'react'
+import {
+  hasSpeechRecognition,
+  getSpeechRecognitionClass,
+  type SpeechRecognitionInstance,
+  type SpeechRecognitionEventLike,
+} from '../utils/speechUtils'
 
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition
-    webkitSpeechRecognition: typeof SpeechRecognition
-  }
-}
-
-export function speakText(text: string): void {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return
-  window.speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(text)
-  window.speechSynthesis.speak(utterance)
-}
-
-export function useSpeechInput(onResult: (text: string) => void) {
+function useSpeechInput(onResult: (text: string) => void) {
   const [isListening, setIsListening] = useState(false)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
 
   const startListening = useCallback(() => {
-    const SpeechRecognitionClass =
-      window.SpeechRecognition ?? window.webkitSpeechRecognition
+    const SpeechRecognitionClass = getSpeechRecognitionClass()
     if (!SpeechRecognitionClass) return
 
     if (recognitionRef.current) {
@@ -32,7 +23,7 @@ export function useSpeechInput(onResult: (text: string) => void) {
     recognition.interimResults = false
     recognition.maxAlternatives = 1
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: SpeechRecognitionEventLike) => {
       const transcript = event.results[0]?.[0]?.transcript ?? ''
       if (transcript) onResult(transcript)
     }
@@ -57,13 +48,10 @@ interface MicButtonProps {
   disabled?: boolean
 }
 
-export function MicButton({ onResult, disabled }: MicButtonProps) {
+export default function MicButton({ onResult, disabled }: MicButtonProps) {
   const { isListening, startListening, stopListening } = useSpeechInput(onResult)
 
-  const hasSpeech = typeof window !== 'undefined' &&
-    (window.SpeechRecognition != null || window.webkitSpeechRecognition != null)
-
-  if (!hasSpeech) return null
+  if (!hasSpeechRecognition()) return null
 
   return (
     <button

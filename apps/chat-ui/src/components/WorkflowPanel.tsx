@@ -50,7 +50,8 @@ export default function WorkflowPanel({ agents, onClose }: WorkflowPanelProps) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['workflows'] })
       setShowBuilder(false)
-      setNewName(''); setNewDesc('')
+      setNewName('')
+      setNewDesc('')
       setSteps([{ order: 0, agentId: agents[0]?.id ?? '', prompt: '' }])
     },
   })

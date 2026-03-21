@@ -7,7 +7,7 @@ import ComparePanel from '../components/ComparePanel'
 import HandoffModal from '../components/HandoffModal'
 import PromptLibrary from '../components/PromptLibrary'
 import FileAttachment from '../components/FileAttachment'
-import { MicButton } from '../components/SpeechControls'
+import MicButton from '../components/SpeechControls'
 
 interface ChatPageProps {
   activeAgentId: string

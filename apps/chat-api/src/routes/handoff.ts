@@ -2,6 +2,9 @@ import type { FastifyInstance } from 'fastify'
 import type { HandoffRequest, HandoffResponse } from '@gateway/shared'
 import { getAgent } from '../agents/registry'
 
+// Maximum characters from context summary included in handoff note
+const MAX_HANDOFF_CONTEXT_LENGTH = 200
+
 const bodySchema = {
   type: 'object',
   required: ['fromAgentId', 'toAgentId', 'messages'],
@@ -46,7 +49,7 @@ export default async function handoffRoutes(app: FastifyInstance) {
       }
 
       const contextSummary = context ?? messages.find((m) => m.role === 'user')?.content ?? 'No context available'
-      const handoffNote = `Context from ${fromAgent.name}: ${contextSummary.slice(0, 200)}`
+      const handoffNote = `Context from ${fromAgent.name}: ${contextSummary.slice(0, MAX_HANDOFF_CONTEXT_LENGTH)}`
 
       const threadContext = [
         { role: 'system', content: handoffNote },

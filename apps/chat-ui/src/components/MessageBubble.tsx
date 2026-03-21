@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react'
 import type { ThreadMessage, MessageMeta } from '../types/chat'
 import MarkdownContent from './MarkdownContent'
-import { speakText } from './SpeechControls'
+import { speakText } from '../utils/speechUtils'
 
 interface MessageBubbleProps {
   message: ThreadMessage

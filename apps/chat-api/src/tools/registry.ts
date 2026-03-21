@@ -51,6 +51,10 @@ export function dispatchTool(name: string, args: Record<string, unknown>): strin
         return 'Error: expression too long'
       }
       try {
+        // The SAFE_EXPR allowlist above restricts the expression to digits, the four
+        // arithmetic operators, parentheses, decimal points, and whitespace only.
+        // No identifiers, strings, or other constructs can appear, so using Function
+        // here is safe and avoids an additional dependency.
         // eslint-disable-next-line no-new-func
         const result = Function(`"use strict"; return (${expr})`)()
         return String(result)

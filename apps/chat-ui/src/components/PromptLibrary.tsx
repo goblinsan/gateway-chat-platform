@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
 
+const COPY_FEEDBACK_DURATION_MS = 1500
+
 interface PromptItem {
   id: string
   title: string
@@ -44,10 +46,10 @@ export default function PromptLibrary({ onUse, onClose }: PromptLibraryProps) {
   const handleCopy = (p: PromptItem) => {
     navigator.clipboard.writeText(p.prompt).then(() => {
       setCopiedId(p.id)
-      setTimeout(() => setCopiedId(null), 1500)
+      setTimeout(() => setCopiedId(null), COPY_FEEDBACK_DURATION_MS)
     }).catch(() => {
       setCopiedId(`error-${p.id}`)
-      setTimeout(() => setCopiedId(null), 1500)
+      setTimeout(() => setCopiedId(null), COPY_FEEDBACK_DURATION_MS)
     })
   }
 
