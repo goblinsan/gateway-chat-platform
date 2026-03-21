@@ -20,6 +20,9 @@ importers:
       '@fastify/helmet':
         specifier: ^13.0.2
         version: 13.0.2
+      '@gateway/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       fastify:
         specifier: ^5.7.2
         version: 5.8.2

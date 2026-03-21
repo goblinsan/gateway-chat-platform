@@ -13,6 +13,7 @@
   "dependencies": {
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",
+    "@gateway/shared": "workspace:*",
     "fastify": "^5.7.2",
     "fastify-plugin": "^5.1.0",
     "pino": "^8.19.0",
