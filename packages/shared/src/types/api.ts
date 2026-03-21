@@ -46,8 +46,21 @@ export interface AgentChatRequest {
 export interface AgentChatResponse {
   agentId: string
   usedProvider: string
+  model?: string
   message: {
     role: 'assistant'
     content: string
   }
+  latencyMs?: number
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+}
+
+/** SSE done event emitted by POST /api/chat/stream */
+export interface AgentStreamDoneEvent {
+  type: 'done'
+  agentId: string
+  model: string
+  usedProvider: string
+  latencyMs: number
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
 }
