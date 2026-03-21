@@ -3,12 +3,16 @@ import type { AgentChatRequest, AgentChatResponse, AgentStreamDoneEvent } from '
 import type { ProviderMessage } from '@gateway/shared'
 import { getAgent } from '../agents/registry'
 import { getProviderRegistry } from '../config/providerRegistry'
+import { getPrismaClient } from '../services/db'
+import { upsertConversation, persistUsageLog } from '../services/persistence'
+import { estimateCostUsd } from '../services/costEstimator'
 
 const bodySchema = {
   type: 'object',
   required: ['agentId', 'messages'],
   properties: {
     agentId: { type: 'string' },
+    threadId: { type: 'string' },
     messages: {
       type: 'array',
       items: {
@@ -25,17 +29,13 @@ const bodySchema = {
 
 /**
  * POST /api/chat — agent-aware chat endpoint.
- *
- * Looks up the requested agent, injects its system prompt server-side, and
- * forwards the request to the appropriate provider via the ProviderRegistry.
- * The system prompt is never returned to the client (Issue #24).
  */
 export default async function chatRoutes(app: FastifyInstance) {
-  app.post<{ Body: AgentChatRequest }>(
+  app.post<{ Body: AgentChatRequest & { threadId?: string } }>(
     '/chat',
     { schema: { body: bodySchema } },
     async (req, reply) => {
-      const { agentId, messages } = req.body
+      const { agentId, messages, threadId } = req.body
 
       const agent = getAgent(agentId)
       if (!agent) {
@@ -72,22 +72,52 @@ export default async function chatRoutes(app: FastifyInstance) {
         ...(result.response.usage ? { usage: result.response.usage } : {}),
       }
 
+      // Persist usage data asynchronously
+      if (threadId) {
+        const prisma = getPrismaClient()
+        const estimatedCostUsd = result.response.usage
+          ? estimateCostUsd(
+              result.response.model ?? agent.model,
+              result.response.usage.promptTokens,
+              result.response.usage.completionTokens,
+            )
+          : 0
+        void (async () => {
+          try {
+            await upsertConversation(prisma, {
+              id: threadId,
+              agentId,
+              title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
+            })
+            await persistUsageLog(prisma, {
+              conversationId: threadId,
+              agentId,
+              provider: result.usedProvider,
+              model: result.response.model ?? agent.model,
+              promptTokens: result.response.usage?.promptTokens ?? 0,
+              completionTokens: result.response.usage?.completionTokens ?? 0,
+              totalTokens: result.response.usage?.totalTokens ?? 0,
+              estimatedCostUsd,
+              latencyMs,
+            })
+          } catch (err) {
+            req.log.warn({ err }, 'Failed to persist conversation data')
+          }
+        })()
+      }
+
       return reply.send(response)
     },
   )
 
   /**
    * POST /api/chat/stream — SSE streaming endpoint.
-   *
-   * Emits token events as `data: {"type":"token","token":"..."}` and a final
-   * done event with metadata. Uses reply.hijack() to take full control of the
-   * raw HTTP response.
    */
-  app.post<{ Body: AgentChatRequest }>(
+  app.post<{ Body: AgentChatRequest & { threadId?: string } }>(
     '/chat/stream',
     { schema: { body: bodySchema } },
     async (req, reply) => {
-      const { agentId, messages } = req.body
+      const { agentId, messages, threadId } = req.body
 
       const agent = getAgent(agentId)
       if (!agent) {
@@ -141,15 +171,46 @@ export default async function chatRoutes(app: FastifyInstance) {
           },
         )
 
+        const latencyMs = Date.now() - startTime
         const donePayload: AgentStreamDoneEvent = {
           type: 'done',
           agentId,
           model: agent.model,
           usedProvider,
-          latencyMs: Date.now() - startTime,
+          latencyMs,
           ...(usageData ? { usage: usageData } : {}),
         }
         writeEvent(donePayload)
+
+        // Persist usage data asynchronously
+        if (threadId) {
+          const prisma = getPrismaClient()
+          const estimatedCostUsd = usageData
+            ? estimateCostUsd(agent.model, usageData.promptTokens, usageData.completionTokens)
+            : 0
+          void (async () => {
+            try {
+              await upsertConversation(prisma, {
+                id: threadId,
+                agentId,
+                title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
+              })
+              await persistUsageLog(prisma, {
+                conversationId: threadId,
+                agentId,
+                provider: usedProvider,
+                model: agent.model,
+                promptTokens: usageData?.promptTokens ?? 0,
+                completionTokens: usageData?.completionTokens ?? 0,
+                totalTokens: usageData?.totalTokens ?? 0,
+                estimatedCostUsd,
+                latencyMs,
+              })
+            } catch (err) {
+              req.log.warn({ err }, 'Failed to persist stream conversation data')
+            }
+          })()
+        }
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Streaming failed'
         writeEvent({ type: 'error', error })

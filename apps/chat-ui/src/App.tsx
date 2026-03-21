@@ -5,6 +5,7 @@ import axios from 'axios'
 import type { AgentListItem, AgentsListResponse } from '@gateway/shared'
 import ChatPage from './pages/ChatPage'
 import HealthPage from './pages/HealthPage'
+import AdminPage from './pages/AdminPage'
 import Sidebar from './components/Sidebar'
 import AgentTabs from './components/AgentTabs'
 import { useThreads } from './hooks/useThreads'
@@ -103,6 +104,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<ChatLayout />} />
       <Route path="/health" element={<HealthPage />} />
+      <Route path="/admin" element={<AdminPage />} />
     </Routes>
   )
 }
