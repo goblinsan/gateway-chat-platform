@@ -44,18 +44,18 @@ export class ProviderRegistry {
   }
 
   /**
-   * Send a chat request, trying the primary provider first and then each
-   * configured fallback in order if the primary is unavailable.
+   * Send a chat request using an explicit ordered provider chain produced by
+   * the routing engine. Each provider is attempted in order; the first
+   * successful response is returned.
    * Throws only if all providers in the chain fail.
    */
-  async sendChatWithFallback(
-    primaryName: string,
+  async sendChatWithChain(
+    providerChain: string[],
     request: ChatRequest,
   ): Promise<FallbackChatResult> {
-    const chain = [primaryName, ...(this.fallbackChains.get(primaryName) ?? [])]
     let lastError: unknown
 
-    for (const name of chain) {
+    for (const name of providerChain) {
       const adapter = this.adapters.get(name)
       if (!adapter) continue
       try {
@@ -68,8 +68,53 @@ export class ProviderRegistry {
 
     throw (
       lastError ??
-      new Error(`No available provider in chain: ${chain.join(' -> ')}`)
+      new Error(`No available provider in chain: ${providerChain.join(' -> ')}`)
     )
+  }
+
+  /**
+   * Stream a chat response using an explicit ordered provider chain produced
+   * by the routing engine. Each provider is attempted in order; the name of
+   * the first provider that streams successfully is returned.
+   * Issues an 'error' StreamEvent and throws only if all providers fail.
+   */
+  async streamChatWithChain(
+    providerChain: string[],
+    request: ChatRequest,
+    onEvent: (event: StreamEvent) => void,
+  ): Promise<string> {
+    let lastError: unknown
+
+    for (const name of providerChain) {
+      const adapter = this.adapters.get(name)
+      if (!adapter) continue
+      try {
+        await adapter.streamChat(request, onEvent)
+        return name
+      } catch (err) {
+        lastError = err
+      }
+    }
+
+    const error =
+      lastError instanceof Error
+        ? lastError.message
+        : `No available provider in chain: ${providerChain.join(' -> ')}`
+    onEvent({ type: 'error', error })
+    throw lastError ?? new Error(error)
+  }
+
+  /**
+   * Send a chat request, trying the primary provider first and then each
+   * configured fallback in order if the primary is unavailable.
+   * Throws only if all providers in the chain fail.
+   */
+  async sendChatWithFallback(
+    primaryName: string,
+    request: ChatRequest,
+  ): Promise<FallbackChatResult> {
+    const chain = [primaryName, ...(this.fallbackChains.get(primaryName) ?? [])]
+    return this.sendChatWithChain(chain, request)
   }
 
   /**
@@ -83,23 +128,7 @@ export class ProviderRegistry {
     onEvent: (event: StreamEvent) => void,
   ): Promise<string> {
     const chain = [primaryName, ...(this.fallbackChains.get(primaryName) ?? [])]
-    let lastError: unknown
-
-    for (const name of chain) {
-      const adapter = this.adapters.get(name)
-      if (!adapter) continue
-      try {
-        await adapter.streamChat(request, onEvent)
-        return name
-      } catch (err) {
-        lastError = err
-      }
-    }
-
-    const error =
-      lastError instanceof Error ? lastError.message : `No available provider in chain: ${chain.join(' -> ')}`
-    onEvent({ type: 'error', error })
-    throw lastError ?? new Error(error)
+    return this.streamChatWithChain(chain, request, onEvent)
   }
 }
 

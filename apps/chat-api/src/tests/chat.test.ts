@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const MOCK_REGISTRY = {
-  sendChatWithFallback: vi.fn().mockResolvedValue({
+  sendChatWithChain: vi.fn().mockResolvedValue({
     response: {
       id: 'resp-1',
       model: 'local-model',
@@ -11,6 +11,11 @@ const MOCK_REGISTRY = {
     },
     usedProvider: 'lm-studio-a',
   }),
+  getAll: vi.fn().mockReturnValue([
+    { name: 'lm-studio-a' },
+    { name: 'lm-studio-b' },
+    { name: 'openai' },
+  ]),
 }
 
 vi.mock('../config/providerRegistry', () => ({
@@ -22,7 +27,7 @@ import chatRoutes from '../routes/chat'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  MOCK_REGISTRY.sendChatWithFallback.mockResolvedValue({
+  MOCK_REGISTRY.sendChatWithChain.mockResolvedValue({
     response: {
       id: 'resp-1',
       model: 'local-model',
@@ -31,6 +36,11 @@ beforeEach(() => {
     },
     usedProvider: 'lm-studio-a',
   })
+  MOCK_REGISTRY.getAll.mockReturnValue([
+    { name: 'lm-studio-a' },
+    { name: 'lm-studio-b' },
+    { name: 'openai' },
+  ])
 })
 
 describe('POST /api/chat', () => {
@@ -112,8 +122,8 @@ describe('POST /api/chat', () => {
       },
     })
 
-    const call = MOCK_REGISTRY.sendChatWithFallback.mock.calls[0]
-    const [, request] = call as [string, { messages: Array<{ role: string; content: string }> }]
+    const call = MOCK_REGISTRY.sendChatWithChain.mock.calls[0]
+    const [, request] = call as [string[], { messages: Array<{ role: string; content: string }> }]
     expect(request.messages[0].role).toBe('system')
     expect(request.messages[1].role).toBe('user')
   })
@@ -132,9 +142,29 @@ describe('POST /api/chat', () => {
       },
     })
 
-    const call = MOCK_REGISTRY.sendChatWithFallback.mock.calls[0]
-    const [, request] = call as [string, { temperature?: number; maxTokens?: number }]
+    const call = MOCK_REGISTRY.sendChatWithChain.mock.calls[0]
+    const [, request] = call as [string[], { temperature?: number; maxTokens?: number }]
     expect(request.temperature).toBe(0.5)
     expect(request.maxTokens).toBe(512)
+  })
+
+  it('uses routing policy to build the provider chain', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'local-analyst',
+        messages: [{ role: 'user', content: 'Analyze this data.' }],
+      },
+    })
+
+    const call = MOCK_REGISTRY.sendChatWithChain.mock.calls[0]
+    const [chain] = call as [string[], unknown]
+    // local-analyst policy: allowedProviders = ['lm-studio-a', 'lm-studio-b']
+    expect(chain).toContain('lm-studio-a')
+    expect(chain).not.toContain('openai')
   })
 })

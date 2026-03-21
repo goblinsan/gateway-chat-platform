@@ -1,3 +1,5 @@
+import type { RoutingPolicy } from './routing'
+
 export type CostClass = 'free' | 'cheap' | 'premium'
 
 export interface AgentConfig {
@@ -17,13 +19,15 @@ export interface AgentConfig {
   /** Enable extended reasoning where the provider supports it */
   enableReasoning?: boolean
   featureFlags?: Record<string, boolean>
+  /** Server-side routing policy — never sent to the browser */
+  routingPolicy?: RoutingPolicy
 }
 
 /**
  * Public agent metadata returned by GET /api/agents.
- * systemPrompt is deliberately omitted to keep prompts server-side.
+ * systemPrompt and routingPolicy are deliberately omitted to keep them server-side.
  */
-export type AgentListItem = Omit<AgentConfig, 'systemPrompt'>
+export type AgentListItem = Omit<AgentConfig, 'systemPrompt' | 'routingPolicy'>
 
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system'

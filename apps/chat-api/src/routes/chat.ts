@@ -6,6 +6,7 @@ import { getProviderRegistry } from '../config/providerRegistry'
 import { getPrismaClient } from '../services/db'
 import { upsertConversation, persistUsageLog } from '../services/persistence'
 import { estimateCostUsd } from '../services/costEstimator'
+import { resolveProviderChain, estimatePromptTokens } from '../routing'
 
 const bodySchema = {
   type: 'object',
@@ -51,8 +52,29 @@ export default async function chatRoutes(app: FastifyInstance) {
       }
       providerMessages.push(...messages)
 
+      // Resolve provider chain via routing engine (Issue #47, #48, #49, #50)
+      const policy = agent.routingPolicy ?? { preferredProvider: agent.providerName }
+      const promptTokenCount = estimatePromptTokens(providerMessages)
+      const availableProviders = registry.getAll().map(a => a.name)
+      const decision = resolveProviderChain(policy, promptTokenCount, availableProviders)
+
+      // Log the routing decision for diagnostics and tuning (Issue #51)
+      req.log.info(
+        {
+          agentId,
+          selectedProvider: decision.selectedProvider,
+          orderedChain: decision.orderedChain,
+          reason: decision.reason,
+          policyMatches: decision.policyMatches,
+          rejectedCandidates: decision.rejectedCandidates,
+          usedFallback: decision.usedFallback,
+          fallbackReason: decision.fallbackReason,
+        },
+        'Routing decision',
+      )
+
       const startTime = Date.now()
-      const result = await registry.sendChatWithFallback(agent.providerName, {
+      const result = await registry.sendChatWithChain(decision.orderedChain, {
         model: agent.model,
         messages: providerMessages,
         temperature: agent.temperature,
@@ -133,6 +155,27 @@ export default async function chatRoutes(app: FastifyInstance) {
       }
       providerMessages.push(...messages)
 
+      // Resolve provider chain via routing engine (Issue #47, #48, #49, #50)
+      const policy = agent.routingPolicy ?? { preferredProvider: agent.providerName }
+      const promptTokenCount = estimatePromptTokens(providerMessages)
+      const availableProviders = registry.getAll().map(a => a.name)
+      const decision = resolveProviderChain(policy, promptTokenCount, availableProviders)
+
+      // Log the routing decision for diagnostics and tuning (Issue #51)
+      req.log.info(
+        {
+          agentId,
+          selectedProvider: decision.selectedProvider,
+          orderedChain: decision.orderedChain,
+          reason: decision.reason,
+          policyMatches: decision.policyMatches,
+          rejectedCandidates: decision.rejectedCandidates,
+          usedFallback: decision.usedFallback,
+          fallbackReason: decision.fallbackReason,
+        },
+        'Routing decision',
+      )
+
       reply.hijack()
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -152,8 +195,8 @@ export default async function chatRoutes(app: FastifyInstance) {
       }
 
       try {
-        const usedProvider = await registry.streamChatWithFallback(
-          agent.providerName,
+        const usedProvider = await registry.streamChatWithChain(
+          decision.orderedChain,
           {
             model: agent.model,
             messages: providerMessages,
