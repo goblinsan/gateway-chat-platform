@@ -2,7 +2,7 @@ import type { AgentConfig } from '@gateway/shared'
 
 /**
  * Seed definitions for the five default agents (Issue #27).
- * systemPrompt is kept server-side and never sent to the browser.
+ * systemPrompt and routingPolicy are kept server-side and never sent to the browser.
  */
 const AGENTS: AgentConfig[] = [
   {
@@ -16,6 +16,11 @@ const AGENTS: AgentConfig[] = [
     systemPrompt:
       'You are a precise local analyst. Respond with structured, data-driven analysis. Be concise and factual.',
     temperature: 0.3,
+    routingPolicy: {
+      preferredProvider: 'lm-studio-a',
+      allowedProviders: ['lm-studio-a', 'lm-studio-b'],
+      maxCostClass: 'free',
+    },
   },
   {
     id: 'creative-builder',
@@ -28,6 +33,11 @@ const AGENTS: AgentConfig[] = [
     systemPrompt:
       'You are a creative builder. Explore imaginative solutions, generate ideas freely, and embrace lateral thinking.',
     temperature: 0.9,
+    routingPolicy: {
+      preferredProvider: 'lm-studio-b',
+      allowedProviders: ['lm-studio-a', 'lm-studio-b'],
+      maxCostClass: 'free',
+    },
   },
   {
     id: 'deep-reasoner',
@@ -41,6 +51,10 @@ const AGENTS: AgentConfig[] = [
       'You are a deep reasoning assistant. Break down complex problems step-by-step, show your work, and arrive at well-supported conclusions.',
     temperature: 0.2,
     enableReasoning: true,
+    routingPolicy: {
+      preferredProvider: 'openai',
+      requiresReasoning: true,
+    },
   },
   {
     id: 'fast-helper',
@@ -54,6 +68,11 @@ const AGENTS: AgentConfig[] = [
       'You are a fast, concise helper. Give short, direct answers. Avoid unnecessary elaboration.',
     temperature: 0.5,
     maxTokens: 512,
+    routingPolicy: {
+      preferredProvider: 'openai',
+      promptLengthThreshold: 1000,
+      allowPaidFallback: true,
+    },
   },
   {
     id: 'tool-agent',
@@ -67,6 +86,10 @@ const AGENTS: AgentConfig[] = [
       'You are a tool-use agent. When completing tasks, prefer structured outputs and leverage available tools effectively.',
     temperature: 0.0,
     featureFlags: { tools: true },
+    routingPolicy: {
+      preferredProvider: 'openai',
+      requiresTools: true,
+    },
   },
 ]
 
