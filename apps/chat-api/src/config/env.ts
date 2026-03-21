@@ -5,6 +5,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   HOST: z.string().default('0.0.0.0'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+  DATABASE_URL: z.string().default('file:./data/gateway.db'),
+  LOG_DIR: z.string().optional(),
+  RETENTION_DAYS_CONVERSATIONS: z.coerce.number().default(90),
+  RETENTION_DAYS_LOGS: z.coerce.number().default(30),
 
   // LM Studio instances
   LM_STUDIO_A_BASE_URL: z.string().url().optional(),
