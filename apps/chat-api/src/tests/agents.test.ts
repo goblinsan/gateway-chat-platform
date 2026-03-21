@@ -16,14 +16,14 @@ describe('GET /api/agents', () => {
     expect(body.agents.length).toBeGreaterThan(0)
   })
 
-  it('returns all 5 seeded agents', async () => {
+  it('returns all 6 seeded agents', async () => {
     const app = Fastify()
     await app.register(agentRoutes, { prefix: '/api' })
 
     const res = await app.inject({ method: 'GET', url: '/api/agents' })
     const body = JSON.parse(res.payload)
 
-    expect(body.agents).toHaveLength(5)
+    expect(body.agents).toHaveLength(6)
   })
 
   it('omits systemPrompt from every agent', async () => {

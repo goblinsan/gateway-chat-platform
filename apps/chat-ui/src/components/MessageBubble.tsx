@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react'
-import type { ThreadMessage } from '../types/chat'
+import type { ThreadMessage, MessageMeta } from '../types/chat'
 import MarkdownContent from './MarkdownContent'
+import { speakText } from './SpeechControls'
 
 interface MessageBubbleProps {
   message: ThreadMessage
@@ -15,6 +16,30 @@ const COST_BADGE: Record<string, string> = {
   free: 'bg-green-900 text-green-300',
   cheap: 'bg-yellow-900 text-yellow-300',
   premium: 'bg-purple-900 text-purple-300',
+}
+
+function RoutingInfo({ explanation }: { explanation: NonNullable<MessageMeta['routingExplanation']> }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-1">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+      >
+        <span>{open ? '▼' : '▶'}</span>
+        Routed to: {explanation.selectedProvider}
+      </button>
+      {open && (
+        <div className="mt-1 bg-gray-900 border border-gray-700 rounded-lg p-2 text-xs text-gray-400 space-y-1">
+          <p><span className="text-gray-500">Reason:</span> {explanation.reason}</p>
+          <p><span className="text-gray-500">Chain:</span> {explanation.orderedChain.join(' → ')}</p>
+          {explanation.policyMatches.length > 0 && (
+            <p><span className="text-gray-500">Policies:</span> {explanation.policyMatches.join(', ')}</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function CopyIcon() {
@@ -191,6 +216,13 @@ const MessageBubble = React.memo(function MessageBubble({
             <CopyIcon />
             {copied ? 'Copied!' : 'Copy'}
           </button>
+          <button
+            onClick={() => speakText(message.content)}
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            title="Read aloud"
+          >
+            🔊
+          </button>
           {onRegenerate && !isStreaming && (
             <button
               onClick={onRegenerate}
@@ -227,6 +259,17 @@ const MessageBubble = React.memo(function MessageBubble({
               </span>
             )}
           </div>
+        )}
+        {meta && !isStreaming && meta.toolsAvailable && meta.toolsAvailable.length > 0 && (
+          <div className="flex items-center gap-1 mt-1">
+            <span className="text-xs text-gray-500">🔧</span>
+            {meta.toolsAvailable.map((t) => (
+              <span key={t} className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">{t}</span>
+            ))}
+          </div>
+        )}
+        {meta && !isStreaming && meta.routingExplanation && (
+          <RoutingInfo explanation={meta.routingExplanation} />
         )}
       </div>
     </div>

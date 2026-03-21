@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { AgentChatRequest, AgentChatResponse, AgentStreamDoneEvent } from '@gateway/shared'
+import type { AgentChatRequest, AgentChatResponse, AgentStreamDoneEvent, RoutingExplanation } from '@gateway/shared'
 import type { ProviderMessage } from '@gateway/shared'
 import { getAgent } from '../agents/registry'
 import { getProviderRegistry } from '../config/providerRegistry'
@@ -7,6 +7,7 @@ import { getPrismaClient } from '../services/db'
 import { upsertConversation, persistUsageLog } from '../services/persistence'
 import { estimateCostUsd } from '../services/costEstimator'
 import { resolveProviderChain, estimatePromptTokens } from '../routing'
+import { getBuiltInTools, dispatchTool } from '../tools/registry'
 
 const bodySchema = {
   type: 'object',
@@ -51,9 +52,16 @@ export default async function chatRoutes(app: FastifyInstance) {
       const registry = getProviderRegistry()
 
       // Build provider messages: inject system prompt first, then conversation
+      let systemPrompt = agent.systemPrompt ?? ''
+      if (agent.featureFlags?.tools === true) {
+        const tools = getBuiltInTools()
+        const currentTime = dispatchTool('get_current_time', {})
+        const toolBlock = tools.map((t) => `- **${t.name}**: ${t.description}`).join('\n')
+        systemPrompt += `\n\n## Available Tools\n${toolBlock}\n\nCurrent time: ${currentTime}`
+      }
       const providerMessages: ProviderMessage[] = []
-      if (agent.systemPrompt) {
-        providerMessages.push({ role: 'system', content: agent.systemPrompt })
+      if (systemPrompt) {
+        providerMessages.push({ role: 'system', content: systemPrompt })
       }
       providerMessages.push(...messages)
 
@@ -62,6 +70,13 @@ export default async function chatRoutes(app: FastifyInstance) {
       const promptTokenCount = estimatePromptTokens(providerMessages)
       const availableProviders = registry.getAll().map(a => a.name)
       const decision = resolveProviderChain(policy, promptTokenCount, availableProviders)
+
+      const routingExplanation: RoutingExplanation = {
+        selectedProvider: decision.selectedProvider,
+        reason: decision.reason,
+        orderedChain: decision.orderedChain,
+        policyMatches: decision.policyMatches,
+      }
 
       // Log the routing decision for diagnostics and tuning (Issue #51)
       req.log.info(
@@ -97,6 +112,7 @@ export default async function chatRoutes(app: FastifyInstance) {
         },
         latencyMs,
         ...(result.response.usage ? { usage: result.response.usage } : {}),
+        routingExplanation,
       }
 
       // Persist usage data asynchronously
@@ -157,9 +173,16 @@ export default async function chatRoutes(app: FastifyInstance) {
 
       const registry = getProviderRegistry()
 
+      let systemPrompt = agent.systemPrompt ?? ''
+      if (agent.featureFlags?.tools === true) {
+        const tools = getBuiltInTools()
+        const currentTime = dispatchTool('get_current_time', {})
+        const toolBlock = tools.map((t) => `- **${t.name}**: ${t.description}`).join('\n')
+        systemPrompt += `\n\n## Available Tools\n${toolBlock}\n\nCurrent time: ${currentTime}`
+      }
       const providerMessages: ProviderMessage[] = []
-      if (agent.systemPrompt) {
-        providerMessages.push({ role: 'system', content: agent.systemPrompt })
+      if (systemPrompt) {
+        providerMessages.push({ role: 'system', content: systemPrompt })
       }
       providerMessages.push(...messages)
 
@@ -168,6 +191,13 @@ export default async function chatRoutes(app: FastifyInstance) {
       const promptTokenCount = estimatePromptTokens(providerMessages)
       const availableProviders = registry.getAll().map(a => a.name)
       const decision = resolveProviderChain(policy, promptTokenCount, availableProviders)
+
+      const routingExplanation: RoutingExplanation = {
+        selectedProvider: decision.selectedProvider,
+        reason: decision.reason,
+        orderedChain: decision.orderedChain,
+        policyMatches: decision.policyMatches,
+      }
 
       // Log the routing decision for diagnostics and tuning (Issue #51)
       req.log.info(
@@ -230,6 +260,7 @@ export default async function chatRoutes(app: FastifyInstance) {
           usedProvider,
           latencyMs,
           ...(usageData ? { usage: usageData } : {}),
+          routingExplanation,
         }
         writeEvent(donePayload)
 

@@ -17,6 +17,7 @@ interface SidebarProps {
   onSelectThread: (threadId: string) => void
   onNewChat: () => void
   onDeleteThread: (threadId: string) => void
+  onWorkflows: () => void
 }
 
 function formatDate(ts: number): string {
@@ -44,6 +45,7 @@ const Sidebar = React.memo(function Sidebar({
   onSelectThread,
   onNewChat,
   onDeleteThread,
+  onWorkflows,
 }: SidebarProps) {
   const [providerStatus, setProviderStatus] = useState<ProviderStatusEntry[]>([])
   const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null)
@@ -85,6 +87,13 @@ const Sidebar = React.memo(function Sidebar({
         >
           <span className="text-base" aria-hidden="true">+</span>
           New Chat
+        </button>
+        <button
+          onClick={onWorkflows}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition-colors mt-1"
+        >
+          <span className="text-base" aria-hidden="true">⚙</span>
+          Workflows
         </button>
       </div>
 

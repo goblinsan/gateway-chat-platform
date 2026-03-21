@@ -91,6 +91,17 @@ const AGENTS: AgentConfig[] = [
       requiresTools: true,
     },
   },
+  {
+    id: 'auto-router',
+    name: 'Auto Router',
+    icon: '🤖',
+    color: '#6366f1',
+    providerName: 'auto',
+    model: 'auto',
+    costClass: 'free',
+    systemPrompt: 'You are an intelligent assistant. Respond helpfully and concisely.',
+    routingPolicy: { allowPaidFallback: true },
+  },
 ]
 
 /** Return all registered agent configurations. */
