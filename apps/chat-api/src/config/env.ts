@@ -34,6 +34,19 @@ const envSchema = z.object({
   // Build metadata
   BUILD_VERSION: z.string().default('0.0.0'),
   BUILD_COMMIT: z.string().default('unknown'),
+
+  // TTS service
+  TTS_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1')
+    .default('false'),
+  TTS_BASE_URL: z.string().default('http://192.168.0.111:5000'),
+  TTS_DEFAULT_VOICE: z.string().default('assistant_v1'),
+  TTS_GENERATE_PATH: z.string().default('/tts'),
+  TTS_STREAM_PATH: z.string().default('/tts/stream'),
+  TTS_VOICES_PATH: z.string().default('/voices'),
+  TTS_HEALTH_PATH: z.string().default('/health'),
 })
 
 export type Env = z.infer<typeof envSchema>

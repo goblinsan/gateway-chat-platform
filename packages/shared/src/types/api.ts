@@ -128,6 +128,8 @@ export interface AgentRunRequest {
     mode?: string
     channel?: string
     to?: string
+    voice?: string
+    format?: string
   }
 }
 
@@ -139,4 +141,34 @@ export interface AgentRunResponse {
   content: string
   latencyMs: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  tts?: TtsResultMetadata
+}
+
+/** Metadata returned when an automation run includes TTS delivery */
+export interface TtsResultMetadata {
+  enabled: boolean
+  voice: string
+  format: string
+  contentType: string
+}
+
+/** Response for GET /api/tts/health */
+export interface TtsHealthResponse {
+  enabled: boolean
+  baseUrl: string
+  upstreamStatus: number
+  error?: string
+}
+
+/** Response for GET /api/tts/voices */
+export interface TtsVoicesResponse {
+  enabled: boolean
+  voices: Array<{ id: string; name?: string; [key: string]: unknown }>
+}
+
+/** Request body for POST /api/tts */
+export interface TtsSynthesizeRequest {
+  text: string
+  voice?: string
+  format?: string
 }

@@ -3,11 +3,13 @@ import type { AgentRunRequest, AgentRunResponse } from '@gateway/shared'
 import type { ProviderMessage } from '@gateway/shared'
 import { getAgent } from '../agents/registry'
 import { getProviderRegistry } from '../config/providerRegistry'
+import { getEnv } from '../config/env'
 import { getPrismaClient } from '../services/db'
 import { persistUsageLog } from '../services/persistence'
 import { estimateCostUsd } from '../services/costEstimator'
 import { resolveProviderChain, estimatePromptTokens } from '../routing'
 import { buildAutomationMessages } from '../services/automationContext'
+import { synthesize } from '../services/ttsClient'
 
 const runBodySchema = {
   type: 'object',
@@ -28,6 +30,8 @@ const runBodySchema = {
         mode: { type: 'string', maxLength: 64 },
         channel: { type: 'string', maxLength: 128 },
         to: { type: 'string', maxLength: 256 },
+        voice: { type: 'string', maxLength: 128 },
+        format: { type: 'string', maxLength: 16 },
       },
     },
   },
@@ -106,6 +110,29 @@ export default async function agentRunRoutes(app: FastifyInstance) {
         content: result.response.message.content,
         latencyMs,
         ...(result.response.usage ? { usage: result.response.usage } : {}),
+      }
+
+      // If TTS delivery requested, synthesize audio and attach metadata
+      if (delivery?.mode === 'tts') {
+        const env = getEnv()
+        if (!env.TTS_ENABLED) {
+          return reply.status(409).send({ error: 'TTS is not enabled' })
+        }
+
+        try {
+          const voice = delivery.voice ?? env.TTS_DEFAULT_VOICE
+          const format = delivery.format ?? 'wav'
+          const ttsResult = await synthesize({ text: response.content, voice, format })
+          response.tts = {
+            enabled: true,
+            voice,
+            format,
+            contentType: ttsResult.contentType,
+          }
+        } catch (err) {
+          req.log.error({ err, agentId }, 'TTS synthesis failed during automation run')
+          response.tts = { enabled: true, voice: delivery.voice ?? env.TTS_DEFAULT_VOICE, format: delivery.format ?? 'wav', contentType: '' }
+        }
       }
 
       // Persist usage log asynchronously

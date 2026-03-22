@@ -76,6 +76,15 @@ ALLOWED_ORIGINS=
 # Cloudflare Access — required for /api/admin/* routes
 CF_ACCESS_TEAM_DOMAIN=yourdomain.cloudflareaccess.com
 CF_ACCESS_AUD=
+
+# TTS service (optional — provided by local-tts-service)
+TTS_ENABLED=false
+TTS_BASE_URL=http://192.168.0.111:5000
+TTS_DEFAULT_VOICE=assistant_v1
+TTS_GENERATE_PATH=/tts
+TTS_STREAM_PATH=/tts/stream
+TTS_VOICES_PATH=/voices
+TTS_HEALTH_PATH=/health
 ```
 
 ### 3. Set up the database
@@ -134,6 +143,9 @@ pnpm --filter @gateway/chat-ui preview
 | `GET` | `/api/providers/status` | Health-check all providers |
 | `GET` | `/api/health` | Service health and uptime |
 | `POST` | `/api/agents/:id/run` | Non-interactive automation run (scheduler / control-plane) |
+| `GET` | `/api/tts/health` | TTS service health and upstream status |
+| `GET` | `/api/tts/voices` | List available TTS voices |
+| `POST` | `/api/tts` | Synthesize text to audio |
 | `GET` | `/api/admin/stats` | Usage analytics (Cloudflare Access required) |
 
 ### Automation Run Endpoint
@@ -160,7 +172,7 @@ The endpoint uses the same routing and provider pipeline as `/api/chat`.
 }
 ```
 
-Only `prompt` is required. `context` and `delivery` are optional — `delivery` is logged but outbound delivery is not yet implemented.
+Only `prompt` is required. `context` and `delivery` are optional — `delivery` is logged but outbound delivery is not yet implemented (except for `mode: "tts"`, see below).
 
 **Response:**
 
@@ -186,6 +198,46 @@ curl -X POST http://localhost:3000/api/agents/bruvie-d/run \
   -H "Content-Type: application/json" \
   -d '{ "prompt": "What is the meaning of life?" }'
 ```
+
+#### TTS delivery
+
+When `TTS_ENABLED=true`, set `delivery.mode` to `"tts"` to synthesize the agent's text response into audio via the local TTS service. The response includes a `tts` metadata block alongside the normal text content.
+
+```json
+{
+  "prompt": "Give me the morning briefing.",
+  "delivery": {
+    "mode": "tts",
+    "voice": "assistant_v1",
+    "format": "wav"
+  }
+}
+```
+
+The response will include:
+
+```json
+{
+  "agentId": "bruvie-d",
+  "content": "Everything is proceeding as badly as expected.",
+  "tts": {
+    "enabled": true,
+    "voice": "assistant_v1",
+    "format": "wav",
+    "contentType": "audio/wav"
+  }
+}
+```
+
+For raw audio synthesis, use `POST /api/tts` directly.
+
+### TTS Endpoints
+
+The TTS routes proxy requests to the local `local-tts-service`. Set `TTS_ENABLED=true` to activate them.
+
+- `GET /api/tts/health` — returns `{ enabled, baseUrl, upstreamStatus }`.
+- `GET /api/tts/voices` — returns `{ enabled, voices: [...] }`. Returns `409` when TTS is disabled.
+- `POST /api/tts` — accepts `{ text, voice?, format? }` and returns raw audio bytes with the appropriate `Content-Type` header. Returns `409` when TTS is disabled.
 
 ### Agent Management API
 

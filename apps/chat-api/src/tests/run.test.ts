@@ -66,11 +66,28 @@ vi.mock('../services/costEstimator', () => ({
   estimateCostUsd: () => 0,
 }))
 
+// TTS client mock
+const mockSynthesize = vi.fn()
+vi.mock('../services/ttsClient', () => ({
+  synthesize: (...args: unknown[]) => mockSynthesize(...args),
+}))
+
+// Env mock — default TTS disabled
+const mockEnv = {
+  TTS_ENABLED: false,
+  TTS_BASE_URL: 'http://192.168.0.111:5000',
+  TTS_DEFAULT_VOICE: 'assistant_v1',
+}
+vi.mock('../config/env', () => ({
+  getEnv: () => mockEnv,
+}))
+
 import Fastify from 'fastify'
 import agentRunRoutes from '../routes/run'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockEnv.TTS_ENABLED = false
   MOCK_REGISTRY.sendChatWithChain.mockResolvedValue({
     response: {
       id: 'resp-1',
@@ -221,5 +238,83 @@ describe('POST /api/agents/:id/run', () => {
     // Verify no chat-specific fields leak in
     expect(body).not.toHaveProperty('message')
     expect(body).not.toHaveProperty('routingExplanation')
+  })
+
+  it('returns TTS metadata when delivery.mode is tts and TTS is enabled', async () => {
+    mockEnv.TTS_ENABLED = true
+    mockSynthesize.mockResolvedValueOnce({
+      contentType: 'audio/wav',
+      audioBuffer: Buffer.from('fake audio'),
+    })
+
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/local-analyst/run',
+      payload: {
+        prompt: 'Morning briefing.',
+        delivery: { mode: 'tts', voice: 'bruvie', format: 'mp3' },
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.tts).toBeDefined()
+    expect(body.tts.enabled).toBe(true)
+    expect(body.tts.voice).toBe('bruvie')
+    expect(body.tts.format).toBe('mp3')
+    expect(body.tts.contentType).toBe('audio/wav')
+    expect(body.content).toBe('Analysis complete.')
+
+    expect(mockSynthesize).toHaveBeenCalledWith({
+      text: 'Analysis complete.',
+      voice: 'bruvie',
+      format: 'mp3',
+    })
+  })
+
+  it('returns 409 when delivery.mode is tts but TTS is disabled', async () => {
+    mockEnv.TTS_ENABLED = false
+
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/local-analyst/run',
+      payload: {
+        prompt: 'Run report.',
+        delivery: { mode: 'tts' },
+      },
+    })
+
+    expect(res.statusCode).toBe(409)
+    const body = JSON.parse(res.payload)
+    expect(body.error).toContain('not enabled')
+  })
+
+  it('returns response with tts metadata even when synthesis fails', async () => {
+    mockEnv.TTS_ENABLED = true
+    mockSynthesize.mockRejectedValueOnce(new Error('Upstream TTS down'))
+
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/local-analyst/run',
+      payload: {
+        prompt: 'Try synthesis.',
+        delivery: { mode: 'tts' },
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.content).toBe('Analysis complete.')
+    expect(body.tts).toBeDefined()
+    expect(body.tts.contentType).toBe('')
   })
 })
