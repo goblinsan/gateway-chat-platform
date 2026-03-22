@@ -115,3 +115,28 @@ export interface HandoffResponse {
   threadContext: Array<{ role: string; content: string }>
   handoffNote: string
 }
+
+/** Request body for POST /api/agents/:id/run */
+export interface AgentRunRequest {
+  prompt: string
+  context?: {
+    workflowId?: string
+    source?: string
+    metadata?: Record<string, unknown>
+  }
+  delivery?: {
+    mode?: string
+    channel?: string
+    to?: string
+  }
+}
+
+/** Response body for POST /api/agents/:id/run */
+export interface AgentRunResponse {
+  agentId: string
+  usedProvider: string
+  model: string
+  content: string
+  latencyMs: number
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+}

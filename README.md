@@ -133,7 +133,59 @@ pnpm --filter @gateway/chat-ui preview
 | `POST` | `/api/prompts` | Manage saved prompts |
 | `GET` | `/api/providers/status` | Health-check all providers |
 | `GET` | `/api/health` | Service health and uptime |
+| `POST` | `/api/agents/:id/run` | Non-interactive automation run (scheduler / control-plane) |
 | `GET` | `/api/admin/stats` | Usage analytics (Cloudflare Access required) |
+
+### Automation Run Endpoint
+
+`POST /api/agents/:id/run` executes a single-turn prompt against an agent without requiring a chat thread. It is designed for scheduler and control-plane invocation (e.g., `gateway-api` triggering a scheduled workflow).
+
+The endpoint uses the same routing and provider pipeline as `/api/chat`.
+
+**Request:**
+
+```json
+{
+  "prompt": "Generate the daily ops summary.",
+  "context": {
+    "workflowId": "wf-daily-report",
+    "source": "scheduler",
+    "metadata": { "env": "production" }
+  },
+  "delivery": {
+    "mode": "telegram",
+    "channel": "ops-alerts",
+    "to": "@oncall"
+  }
+}
+```
+
+Only `prompt` is required. `context` and `delivery` are optional — `delivery` is logged but outbound delivery is not yet implemented.
+
+**Response:**
+
+```json
+{
+  "agentId": "bruvie-d",
+  "usedProvider": "lm-studio-a",
+  "model": "qwen/qwen3-32b",
+  "content": "Here is today's ops summary...",
+  "latencyMs": 1842,
+  "usage": {
+    "promptTokens": 156,
+    "completionTokens": 423,
+    "totalTokens": 579
+  }
+}
+```
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:3000/api/agents/bruvie-d/run \
+  -H "Content-Type: application/json" \
+  -d '{ "prompt": "What is the meaning of life?" }'
+```
 
 ### Agent Management API
 

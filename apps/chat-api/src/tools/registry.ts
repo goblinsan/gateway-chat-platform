@@ -1,3 +1,5 @@
+import fs from 'fs'
+import path from 'path'
 import type { ToolDefinition } from '@gateway/shared'
 
 export interface ToolResult {
@@ -27,6 +29,19 @@ const BUILT_IN_TOOLS: ToolDefinition[] = [
       required: ['expression'],
     },
   },
+  {
+    name: 'file_read',
+    description: 'Reads the contents of a file at the given path. Returns an error string if the file cannot be read.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Absolute or relative path to the file to read' },
+      },
+      required: ['filePath'],
+    },
+  },
+  // TODO: http_health_check — performs a GET request and returns status code + latency
+  // TODO: telegram_send — sends a message to a Telegram chat via bot API
 ]
 
 const SAFE_EXPR = /^[0-9+\-*/().\s]+$/
@@ -60,6 +75,28 @@ export function dispatchTool(name: string, args: Record<string, unknown>): strin
         return String(result)
       } catch {
         return 'Error: could not evaluate expression'
+      }
+    }
+    case 'file_read': {
+      const filePath = String(args.filePath ?? '')
+      if (!filePath) return 'Error: filePath is required'
+      // Prevent path traversal — resolve and verify the path stays within cwd
+      const resolved = path.resolve(filePath)
+      const cwd = process.cwd()
+      if (!resolved.startsWith(cwd)) {
+        return 'Error: path traversal not allowed'
+      }
+      try {
+        const content = fs.readFileSync(resolved, 'utf-8')
+        // Cap output to prevent huge files from blowing up context
+        const MAX_LENGTH = 32_000
+        if (content.length > MAX_LENGTH) {
+          return content.slice(0, MAX_LENGTH) + `\n\n[truncated — file is ${content.length} chars]`
+        }
+        return content
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error'
+        return `Error reading file: ${msg}`
       }
     }
     default:
