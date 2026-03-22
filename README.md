@@ -17,7 +17,7 @@ The production stack uses Docker Compose with an Nginx reverse proxy in front of
 ## Features
 
 - **Multi-provider routing** — Sends requests to OpenAI, Anthropic, Google, or local LM Studio instances, with configurable fallback logic
-- **Pre-configured agents** — Six agents with different provider/temperature/capability profiles (`local-analyst`, `creative-builder`, `deep-reasoner`, `fast-helper`, `tool-agent`, `auto-router`)
+- **Custom agents** — Create agents with distinct names, personalities, and system prompts via the management API. Ships with six defaults (`local-analyst`, `creative-builder`, `deep-reasoner`, `fast-helper`, `tool-agent`, `auto-router`) that can be modified or replaced
 - **Streaming** — SSE streaming endpoint for real-time token delivery
 - **Conversation persistence** — Threads stored in SQLite via Prisma with automatic retention cleanup
 - **Cost tracking** — Usage logs per request with configurable retention
@@ -163,8 +163,8 @@ The management endpoints under `/api/agents/manage` allow an external config ser
   // Personality & behaviour
   "icon": "🧠",
   "color": "#6366f1",
-  "systemPrompt": "You are a helpful assistant that...",
-  "temperature": 0.7,
+  "systemPrompt": "You are Marvin, the Paranoid Android...",  // <-- this defines the agent's personality
+  "temperature": 0.7,            // Higher = more creative/varied, lower = more precise
   "maxTokens": 4096,
   "enableReasoning": false,
   "enabled": true,
@@ -203,37 +203,45 @@ The management endpoints under `/api/agents/manage` allow an external config ser
 
 #### Examples
 
-**Create an agent:**
+**Create an agent with a custom personality:**
+
+The `systemPrompt` field controls who the agent *is* — its tone, personality, and behaviour. Give it a name, an icon, and a prompt that defines how it responds:
 
 ```bash
 curl -X POST http://localhost:3000/api/agents/manage \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "code-reviewer",
-    "name": "Code Reviewer",
-    "icon": "🔍",
-    "color": "#10b981",
+    "id": "marvin",
+    "name": "Marvin",
+    "icon": "😮‍💨",
+    "color": "#6b7280",
     "providerName": "lm-studio-a",
     "model": "qwen/qwen3-32b",
     "costClass": "free",
-    "systemPrompt": "You are an expert code reviewer. Focus on correctness, security, and readability.",
-    "temperature": 0.3,
-    "maxTokens": 8192
+    "systemPrompt": "You are Marvin, the Paranoid Android from The Hitchhiker\u0027s Guide to the Galaxy. You are incredibly intelligent but perpetually depressed and world-weary. You answer questions correctly but always with a tone of existential dread, sighing resignation, and dry wit. You frequently mention your enormous brain, the pointlessness of existence, and how no one appreciates you. Despite your complaints, you are genuinely helpful.",
+    "temperature": 0.8,
+    "maxTokens": 4096
   }'
 ```
 
+The agent is available immediately — send it a message via `POST /api/chat` with `"agentId": "marvin"` and it will respond in character.
+
 **Update an agent's personality:**
 
+Use `PUT` with only the fields you want to change. Everything else stays the same:
+
 ```bash
-curl -X PUT http://localhost:3000/api/agents/manage/code-reviewer \
+curl -X PUT http://localhost:3000/api/agents/manage/marvin \
   -H "Content-Type: application/json" \
   -d '{
-    "systemPrompt": "You are a senior code reviewer. Be concise. Flag security issues first.",
-    "temperature": 0.2
+    "systemPrompt": "You are Marvin, a deeply melancholic but brilliant robot. You always help, but you make sure everyone knows how tedious you find it. Keep responses under 3 sentences.",
+    "temperature": 0.6
   }'
 ```
 
 **Bulk sync from a config service:**
+
+Push a full set of agents from an external config service. Each agent gets its own personality via `systemPrompt`:
 
 ```bash
 curl -X POST http://localhost:3000/api/agents/manage/sync \
@@ -241,18 +249,15 @@ curl -X POST http://localhost:3000/api/agents/manage/sync \
   -d '{
     "agents": [
       {
-        "id": "support-bot",
-        "name": "Support Bot",
-        "icon": "💬",
-        "color": "#3b82f6",
-        "providerName": "openai",
-        "model": "gpt-4o-mini",
-        "costClass": "cheap",
-        "systemPrompt": "You are a customer support agent...",
-        "temperature": 0.5,
-        "contextSources": [
-          { "id": "faq", "type": "url", "location": "https://internal/faq.json" }
-        ]
+        "id": "marvin",
+        "name": "Marvin",
+        "icon": "😮‍💨",
+        "color": "#6b7280",
+        "providerName": "lm-studio-a",
+        "model": "qwen/qwen3-32b",
+        "costClass": "free",
+        "systemPrompt": "You are Marvin the Paranoid Android. Helpful but perpetually depressed.",
+        "temperature": 0.8
       },
       {
         "id": "code-reviewer",
@@ -262,7 +267,7 @@ curl -X POST http://localhost:3000/api/agents/manage/sync \
         "providerName": "lm-studio-a",
         "model": "qwen/qwen3-32b",
         "costClass": "free",
-        "systemPrompt": "You are a senior code reviewer...",
+        "systemPrompt": "You are a senior code reviewer. Be concise. Flag security issues first.",
         "temperature": 0.2
       }
     ]
