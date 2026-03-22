@@ -15,6 +15,7 @@ import workflowsRoutes from './routes/workflows'
 import cfAccessPlugin from './plugins/cfAccess'
 import { getPrismaClient } from './services/db'
 import { scheduleRetentionCleanup } from './services/retention'
+import { initAgentRegistry } from './agents/registry'
 
 // Max request body size: 64 KB — prevents oversized prompt submissions (#59)
 const BODY_LIMIT = 64 * 1024
@@ -54,7 +55,10 @@ async function bootstrap() {
       : env.NODE_ENV !== 'production'
 
   // Security plugins
-  await app.register(import('@fastify/helmet'))
+  await app.register(import('@fastify/helmet'), {
+    // Disable HSTS in development — it forces HTTPS which breaks the local dev proxy
+    hsts: env.NODE_ENV === 'production',
+  })
   await app.register(import('@fastify/cors'), {
     origin: corsOrigin,
     credentials: true,
@@ -71,6 +75,10 @@ async function bootstrap() {
       message: `Rate limit exceeded. Try again in ${Math.ceil(context.ttl / 1000)}s`,
     }),
   })
+
+  // Initialize dynamic agent registry from DB (seeds defaults on first run)
+  const prisma = getPrismaClient()
+  await initAgentRegistry(prisma)
 
   // Routes
   await app.register(healthRoutes, { prefix: '/api' })
@@ -93,7 +101,6 @@ async function bootstrap() {
   app.get('/', async () => ({ name: 'gateway-chat-api', version: env.BUILD_VERSION }))
 
   // Start retention cleanup scheduler
-  const prisma = getPrismaClient()
   scheduleRetentionCleanup(prisma, env.RETENTION_DAYS_CONVERSATIONS, env.RETENTION_DAYS_LOGS)
 
   await app.listen({ port: env.PORT, host: env.HOST })

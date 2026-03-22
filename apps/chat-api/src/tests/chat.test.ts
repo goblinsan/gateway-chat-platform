@@ -1,5 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('../agents/registry', () => {
+  const AGENTS = [
+    { id: 'local-analyst', name: 'Local Analyst', icon: '🔍', color: '#3b82f6', providerName: 'lm-studio-a', model: 'local-model', costClass: 'free', systemPrompt: 'You are a precise local analyst.', temperature: 0.3, routingPolicy: { preferredProvider: 'lm-studio-a', allowedProviders: ['lm-studio-a', 'lm-studio-b'], maxCostClass: 'free' }, enabled: true },
+    { id: 'creative-builder', name: 'Creative Builder', icon: '🎨', color: '#a855f7', providerName: 'lm-studio-b', model: 'local-model', costClass: 'free', systemPrompt: 'builder', temperature: 0.9, enabled: true },
+    { id: 'fast-helper', name: 'Fast Cheap Helper', icon: '⚡', color: '#22c55e', providerName: 'openai', model: 'gpt-4o-mini', costClass: 'cheap', systemPrompt: 'helper', temperature: 0.5, maxTokens: 512, routingPolicy: { preferredProvider: 'openai', promptLengthThreshold: 1000, allowPaidFallback: true }, enabled: true },
+  ]
+  return {
+    listAgents: () => AGENTS,
+    getAgent: (id: string) => AGENTS.find((a) => a.id === id),
+    getAgentRegistry: () => ({ list: () => AGENTS, get: (id: string) => AGENTS.find((a) => a.id === id) }),
+  }
+})
+
 const MOCK_REGISTRY = {
   sendChatWithChain: vi.fn().mockResolvedValue({
     response: {

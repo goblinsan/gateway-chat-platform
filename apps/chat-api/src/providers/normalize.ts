@@ -4,6 +4,7 @@ import type { ChatResponse, ModelInfo, StreamEvent, TokenUsage, ProviderMessage 
 export interface OpenAIMessage {
   role: string
   content: string | null
+  reasoning_content?: string | null
 }
 
 export interface OpenAIChoice {
@@ -66,12 +67,13 @@ export function normalizeUsage(raw?: OpenAIUsage): TokenUsage | undefined {
 export function normalizeChatResponse(raw: OpenAIChatResponse): ChatResponse {
   const choice = raw.choices[0]
   const msg = choice?.message
+  const content = msg?.content || msg?.reasoning_content || ''
   return {
     id: raw.id,
     model: raw.model,
     message: {
       role: (msg?.role as ProviderMessage['role']) ?? 'assistant',
-      content: msg?.content ?? '',
+      content,
     },
     finishReason: normalizeFinishReason(choice?.finish_reason),
     usage: normalizeUsage(raw.usage),
@@ -109,6 +111,10 @@ export function parseStreamLine(line: string): StreamEvent | null {
       return { type: 'token', token: delta.content }
     }
 
+    // Skip reasoning_content during streaming — it's the model's internal
+    // chain-of-thought (e.g. Qwen3.5) and should not be shown to the user.
+    // The actual answer arrives in subsequent `content` deltas.
+
     return null
   } catch {
     return null
@@ -116,8 +122,8 @@ export function parseStreamLine(line: string): StreamEvent | null {
 }
 
 /**
- * Reads an SSE response body line-by-line and emits normalized StreamEvents.
- * Closes the reader when 'done' or 'error' events are emitted.
+ * Reads an SSE response body and emits normalized StreamEvents.
+ * Handles both standard SSE delimiters and long single-line events.
  */
 export async function readSseStream(
   response: Response,
@@ -146,6 +152,7 @@ export async function readSseStream(
       buffer = lines.pop() ?? ''
 
       for (const line of lines) {
+        if (!line || !line.startsWith('data: ')) continue
         const event = parseStreamLine(line)
         if (event) {
           onEvent(event)

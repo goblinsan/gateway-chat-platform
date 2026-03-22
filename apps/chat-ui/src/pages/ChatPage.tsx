@@ -82,6 +82,7 @@ export default function ChatPage({
       setIsStreaming(true)
 
       let accumulated = ''
+      let errorReceived = false
       try {
         const response = await fetch('/api/chat/stream', {
           method: 'POST',
@@ -121,6 +122,7 @@ export default function ChatPage({
                   routingExplanation: event.routingExplanation,
                 })
               } else if (event.type === 'error') {
+                errorReceived = true
                 onUpdateLastAssistantMessage(threadId, `⚠️ ${event.error}`)
               }
             } catch (parseErr) {
@@ -129,7 +131,7 @@ export default function ChatPage({
           }
         }
 
-        if (!accumulated) {
+        if (!accumulated && !errorReceived) {
           onUpdateLastAssistantMessage(threadId, '⚠️ No response received.')
         }
       } catch (err) {

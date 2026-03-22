@@ -219,17 +219,15 @@ export default async function chatRoutes(app: FastifyInstance) {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
       })
 
       const startTime = Date.now()
       let usageData: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
-      let streamClosed = false
-      req.raw.once('close', () => { streamClosed = true })
 
-      const writeEvent = (payload: object): void => {
-        if (!streamClosed) {
-          reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`)
-        }
+      const writeEvent = (payload: object): boolean => {
+        if (reply.raw.destroyed) return false
+        return reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`)
       }
 
       try {

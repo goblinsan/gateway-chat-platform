@@ -1,5 +1,19 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import Fastify from 'fastify'
+
+vi.mock('../agents/registry', () => {
+  const AGENTS = [
+    { id: 'local-analyst', name: 'Local Analyst', icon: '🔍', color: '#3b82f6', providerName: 'lm-studio-a', model: 'local-model', costClass: 'free', systemPrompt: 'analyst', enabled: true },
+    { id: 'creative-builder', name: 'Creative Builder', icon: '🎨', color: '#a855f7', providerName: 'lm-studio-b', model: 'local-model', costClass: 'free', systemPrompt: 'builder', enabled: true },
+    { id: 'fast-helper', name: 'Fast Cheap Helper', icon: '⚡', color: '#22c55e', providerName: 'openai', model: 'gpt-4o-mini', costClass: 'cheap', systemPrompt: 'helper', temperature: 0.5, maxTokens: 512, enabled: true },
+  ]
+  return {
+    listAgents: () => AGENTS,
+    getAgent: (id: string) => AGENTS.find((a) => a.id === id),
+    getAgentRegistry: () => ({ list: () => AGENTS, get: (id: string) => AGENTS.find((a) => a.id === id) }),
+  }
+})
+
 import handoffRoutes from '../routes/handoff'
 
 describe('POST /api/chat/handoff', () => {

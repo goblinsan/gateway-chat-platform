@@ -2,6 +2,28 @@ import type { RoutingPolicy } from './routing'
 
 export type CostClass = 'free' | 'cheap' | 'premium'
 
+/** Configuration for a model endpoint that an agent connects to. */
+export interface ModelEndpointConfig {
+  /** Base URL for the model API (e.g. http://192.168.0.172:1234) */
+  baseUrl?: string
+  /** API key if the endpoint requires authentication */
+  apiKey?: string
+  /** Model-specific parameters passed to the provider */
+  modelParams?: Record<string, unknown>
+}
+
+/** Location reference for context or memory that the agent should use. */
+export interface ContextSource {
+  /** Identifier for this context source */
+  id: string
+  /** Type of context source */
+  type: 'url' | 'file' | 'database' | 'vector-store'
+  /** Connection string, URL, or path to the source */
+  location: string
+  /** Human-readable description */
+  description?: string
+}
+
 export interface AgentConfig {
   id: string
   name: string
@@ -21,13 +43,21 @@ export interface AgentConfig {
   featureFlags?: Record<string, boolean>
   /** Server-side routing policy — never sent to the browser */
   routingPolicy?: RoutingPolicy
+  /** Model endpoint override — allows pointing the agent at a specific endpoint */
+  endpointConfig?: ModelEndpointConfig
+  /** Context and memory sources available to this agent */
+  contextSources?: ContextSource[]
+  /** Whether this agent was loaded from an external config source (vs. seed data) */
+  source?: 'seed' | 'database' | 'remote'
+  /** Whether this agent is active and available for use */
+  enabled?: boolean
 }
 
 /**
  * Public agent metadata returned by GET /api/agents.
- * systemPrompt and routingPolicy are deliberately omitted to keep them server-side.
+ * Sensitive fields are deliberately omitted to keep them server-side.
  */
-export type AgentListItem = Omit<AgentConfig, 'systemPrompt' | 'routingPolicy'>
+export type AgentListItem = Omit<AgentConfig, 'systemPrompt' | 'routingPolicy' | 'endpointConfig' | 'contextSources'>
 
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system'

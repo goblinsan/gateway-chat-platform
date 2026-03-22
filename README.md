@@ -1,1 +1,299 @@
 # gateway-chat-platform
+
+A multi-provider AI gateway with an intelligent routing engine, conversation persistence, and a React-based chat UI. It aggregates multiple LLM providers (OpenAI, Anthropic, Google, LM Studio) behind a single API, routing requests based on cost, capabilities, and context requirements.
+
+## Architecture
+
+This is a pnpm monorepo containing three packages:
+
+| Package | Description |
+|---|---|
+| `apps/chat-api` | Fastify backend — API gateway, routing engine, and persistence layer |
+| `apps/chat-ui` | React/Vite single-page app — chat interface |
+| `packages/shared` | Shared TypeScript types and API contracts |
+
+The production stack uses Docker Compose with an Nginx reverse proxy in front of both services. Nginx routes `/api/*` to the API and `/` to the UI, and enforces Cloudflare IP allowlisting.
+
+## Features
+
+- **Multi-provider routing** — Sends requests to OpenAI, Anthropic, Google, or local LM Studio instances, with configurable fallback logic
+- **Pre-configured agents** — Six agents with different provider/temperature/capability profiles (`local-analyst`, `creative-builder`, `deep-reasoner`, `fast-helper`, `tool-agent`, `auto-router`)
+- **Streaming** — SSE streaming endpoint for real-time token delivery
+- **Conversation persistence** — Threads stored in SQLite via Prisma with automatic retention cleanup
+- **Cost tracking** — Usage logs per request with configurable retention
+- **Provider comparison** — Side-by-side responses from multiple providers
+- **Multi-step workflows** — Chain agents across a sequence of steps
+- **Agent handoff** — Transfer a conversation thread between agents
+- **File attachments** — Attach files to conversations
+- **Prompt library** — Saved and reusable prompt management
+- **Admin dashboard** — Analytics endpoint protected by Cloudflare Access JWT
+
+## Requirements
+
+- Node.js >= 20
+- pnpm >= 9
+- Docker + Docker Compose (for containerised runs)
+
+## Setup
+
+### 1. Install dependencies
+
+```bash
+pnpm install
+```
+
+### 2. Configure environment variables
+
+Create `apps/chat-api/.env`. Docker Compose picks this file up automatically via `env_file: apps/chat-api/.env` in `docker-compose.yml` — no extra steps needed when running with containers. For local development, the API process reads it directly via `dotenv`.
+
+```bash
+# Server
+NODE_ENV=development
+PORT=3000
+HOST=0.0.0.0
+LOG_LEVEL=info
+LOG_DIR=          # Leave empty to log to stdout; set a path for file logging
+
+# Database (SQLite)
+DATABASE_URL=file:./data/gateway.db
+
+# Data retention
+RETENTION_DAYS_CONVERSATIONS=90
+RETENTION_DAYS_LOGS=30
+
+# Local providers (LM Studio)
+LM_STUDIO_A_BASE_URL=http://localhost:1234
+LM_STUDIO_B_BASE_URL=http://localhost:1235
+
+# Cloud provider API keys
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+GOOGLE_API_KEY=...
+
+# CORS — comma-separated origins; leave empty to allow all in development
+ALLOWED_ORIGINS=
+
+# Cloudflare Access — required for /api/admin/* routes
+CF_ACCESS_TEAM_DOMAIN=yourdomain.cloudflareaccess.com
+CF_ACCESS_AUD=
+```
+
+### 3. Set up the database
+
+```bash
+cd apps/chat-api
+pnpm prisma:generate   # Generate the Prisma client
+pnpm prisma:migrate    # Apply migrations
+```
+
+## Running
+
+### Development
+
+Starts the API and UI in parallel with hot-reload:
+
+```bash
+pnpm dev
+```
+
+- API: `http://localhost:3000`
+- UI: `http://localhost:5173`
+
+### Docker Compose
+
+Builds and starts the full stack (API + UI + Nginx reverse proxy):
+
+```bash
+docker-compose up
+```
+
+The application is served at `http://localhost:80`. The API is available under `/api`.
+
+### Production build
+
+```bash
+pnpm build
+
+# Then start each app individually:
+pnpm --filter @gateway/chat-api start
+pnpm --filter @gateway/chat-ui preview
+```
+
+## API Overview
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/chat` | Send a message to an agent |
+| `POST` | `/api/chat/stream` | SSE streaming chat |
+| `GET` | `/api/agents` | List configured agents (public, sensitive fields stripped) |
+| `POST` | `/api/compare` | Compare responses across providers |
+| `POST` | `/api/workflows` | Run a multi-step workflow |
+| `POST` | `/api/handoff` | Transfer a thread to another agent |
+| `POST` | `/api/files` | Attach a file to a conversation |
+| `POST` | `/api/prompts` | Manage saved prompts |
+| `GET` | `/api/providers/status` | Health-check all providers |
+| `GET` | `/api/health` | Service health and uptime |
+| `GET` | `/api/admin/stats` | Usage analytics (Cloudflare Access required) |
+
+### Agent Management API
+
+The management endpoints under `/api/agents/manage` allow an external config service to create, update, delete, and bulk-sync agent configurations at runtime. Changes are persisted to the database and take effect immediately.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/agents/manage` | List all agents with full config (including disabled) |
+| `GET` | `/api/agents/manage/:id` | Get a single agent's full config |
+| `POST` | `/api/agents/manage` | Create a new agent |
+| `PUT` | `/api/agents/manage/:id` | Partial update of an existing agent |
+| `DELETE` | `/api/agents/manage/:id` | Remove an agent |
+| `POST` | `/api/agents/manage/sync` | Bulk upsert agents from a remote config source |
+| `POST` | `/api/agents/manage/reload` | Force reload agents from the database into the in-memory cache |
+
+#### Agent config schema
+
+```jsonc
+{
+  // Required
+  "id": "my-agent",              // Unique ID — lowercase alphanumeric, hyphens, underscores
+  "name": "My Agent",
+  "providerName": "lm-studio-a", // Provider key (openai, anthropic, google, lm-studio-a, lm-studio-b)
+  "model": "qwen/qwen3-32b",
+  "costClass": "free",           // "free" | "cheap" | "premium"
+
+  // Personality & behaviour
+  "icon": "🧠",
+  "color": "#6366f1",
+  "systemPrompt": "You are a helpful assistant that...",
+  "temperature": 0.7,
+  "maxTokens": 4096,
+  "enableReasoning": false,
+  "enabled": true,
+
+  // Feature flags
+  "featureFlags": {
+    "webSearch": false,
+    "codeExecution": true
+  },
+
+  // Routing policy — controls provider fallback and capability matching
+  "routingPolicy": {
+    "allowedProviders": ["lm-studio-a"],
+    "preferredCostClass": "free",
+    "requiredCapabilities": ["chat"]
+  },
+
+  // Model endpoint override — point the agent at a specific API
+  "endpointConfig": {
+    "baseUrl": "http://192.168.0.172:1234",
+    "apiKey": "sk-...",
+    "modelParams": { "top_p": 0.9 }
+  },
+
+  // Context / memory sources the agent should use
+  "contextSources": [
+    {
+      "id": "knowledge-base",
+      "type": "vector-store",       // "url" | "file" | "database" | "vector-store"
+      "location": "http://vectordb:6333/collections/docs",
+      "description": "Product documentation"
+    }
+  ]
+}
+```
+
+#### Examples
+
+**Create an agent:**
+
+```bash
+curl -X POST http://localhost:3000/api/agents/manage \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "code-reviewer",
+    "name": "Code Reviewer",
+    "icon": "🔍",
+    "color": "#10b981",
+    "providerName": "lm-studio-a",
+    "model": "qwen/qwen3-32b",
+    "costClass": "free",
+    "systemPrompt": "You are an expert code reviewer. Focus on correctness, security, and readability.",
+    "temperature": 0.3,
+    "maxTokens": 8192
+  }'
+```
+
+**Update an agent's personality:**
+
+```bash
+curl -X PUT http://localhost:3000/api/agents/manage/code-reviewer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "systemPrompt": "You are a senior code reviewer. Be concise. Flag security issues first.",
+    "temperature": 0.2
+  }'
+```
+
+**Bulk sync from a config service:**
+
+```bash
+curl -X POST http://localhost:3000/api/agents/manage/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agents": [
+      {
+        "id": "support-bot",
+        "name": "Support Bot",
+        "icon": "💬",
+        "color": "#3b82f6",
+        "providerName": "openai",
+        "model": "gpt-4o-mini",
+        "costClass": "cheap",
+        "systemPrompt": "You are a customer support agent...",
+        "temperature": 0.5,
+        "contextSources": [
+          { "id": "faq", "type": "url", "location": "https://internal/faq.json" }
+        ]
+      },
+      {
+        "id": "code-reviewer",
+        "name": "Code Reviewer",
+        "icon": "🔍",
+        "color": "#10b981",
+        "providerName": "lm-studio-a",
+        "model": "qwen/qwen3-32b",
+        "costClass": "free",
+        "systemPrompt": "You are a senior code reviewer...",
+        "temperature": 0.2
+      }
+    ]
+  }'
+```
+
+The sync endpoint performs an upsert — existing agents are updated, new agents are created. It returns a summary: `{ "created": 1, "updated": 1 }`.
+
+**Disable an agent without deleting it:**
+
+```bash
+curl -X PUT http://localhost:3000/api/agents/manage/code-reviewer \
+  -H "Content-Type: application/json" \
+  -d '{ "enabled": false }'
+```
+
+Disabled agents are hidden from the public `GET /api/agents` list but remain visible via `GET /api/agents/manage`.
+
+## Testing
+
+```bash
+pnpm test        # Unit tests (Vitest)
+pnpm e2e         # End-to-end tests (Playwright)
+pnpm typecheck   # TypeScript type checking
+pnpm lint        # Linting
+```
+
+## Tech Stack
+
+**Backend:** Fastify 5, TypeScript, Prisma (SQLite), Zod, Pino, jose
+
+**Frontend:** React 18, Vite, TanStack Query, Tailwind CSS, react-markdown
+
+**Infrastructure:** Docker, Nginx, Cloudflare Access

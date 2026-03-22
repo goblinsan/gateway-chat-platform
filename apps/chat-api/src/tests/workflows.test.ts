@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+vi.mock('../agents/registry', () => {
+  const AGENTS = [
+    { id: 'local-analyst', name: 'Local Analyst', icon: '🔍', color: '#3b82f6', providerName: 'lm-studio-a', model: 'local-model', costClass: 'free', systemPrompt: 'analyst', temperature: 0.3, routingPolicy: { preferredProvider: 'lm-studio-a' }, enabled: true },
+  ]
+  return {
+    listAgents: () => AGENTS,
+    getAgent: (id: string) => AGENTS.find((a) => a.id === id),
+    getAgentRegistry: () => ({ list: () => AGENTS, get: (id: string) => AGENTS.find((a) => a.id === id) }),
+  }
+})
+
 const MOCK_REGISTRY = {
   sendChatWithChain: vi.fn().mockResolvedValue({
     response: {

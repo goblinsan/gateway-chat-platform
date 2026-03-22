@@ -40,3 +40,24 @@ model UsageLog {
   latencyMs        Int
   createdAt        DateTime      @default(now())
 }
+
+model Agent {
+  id              String   @id
+  name            String
+  icon            String   @default("🤖")
+  color           String   @default("#6366f1")
+  providerName    String
+  model           String
+  costClass       String   @default("free")
+  systemPrompt    String?
+  temperature     Float?
+  maxTokens       Int?
+  enableReasoning Boolean  @default(false)
+  featureFlags    String?  // JSON string
+  routingPolicy   String?  // JSON string
+  endpointConfig  String?  // JSON string
+  contextSources  String?  // JSON string
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

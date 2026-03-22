@@ -4,3 +4,6 @@ dist/
 .env.local
 .env.production
 *.tsbuildinfo
+*.db
+*.db-journal
+test-stream.mjs
