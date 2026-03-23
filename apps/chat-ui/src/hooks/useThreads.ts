@@ -3,6 +3,21 @@ import type { ChatThread, ThreadMessage, MessageMeta } from '../types/chat'
 
 const STORAGE_KEY = 'gateway-chat-threads'
 
+function makeId(): string {
+  const cryptoApi = globalThis.crypto
+  if (cryptoApi?.randomUUID) {
+    return cryptoApi.randomUUID()
+  }
+
+  if (cryptoApi?.getRandomValues) {
+    const bytes = new Uint8Array(16)
+    cryptoApi.getRandomValues(bytes)
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 function loadThreads(): ChatThread[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -35,7 +50,7 @@ export function useThreads() {
   const createThread = useCallback(
     (agentId: string, firstUserMessage: string): ChatThread => {
       const thread: ChatThread = {
-        id: crypto.randomUUID(),
+        id: makeId(),
         agentId,
         title: firstUserMessage.slice(0, 60),
         createdAt: Date.now(),
@@ -51,7 +66,7 @@ export function useThreads() {
     (threadId: string, msg: Omit<ThreadMessage, 'id' | 'createdAt'>): ThreadMessage => {
       const message: ThreadMessage = {
         ...msg,
-        id: crypto.randomUUID(),
+        id: makeId(),
         createdAt: Date.now(),
       }
       setThreads((prev) =>

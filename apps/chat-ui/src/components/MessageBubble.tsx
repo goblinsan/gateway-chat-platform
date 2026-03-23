@@ -1,12 +1,14 @@
 import React, { useState, useCallback } from 'react'
 import type { ThreadMessage, MessageMeta } from '../types/chat'
 import MarkdownContent from './MarkdownContent'
-import { speakText } from '../utils/speechUtils'
+import TtsButton from './TtsButton'
 
 interface MessageBubbleProps {
   message: ThreadMessage
   isStreaming?: boolean
   agentIcon?: string
+  ttsEnabled?: boolean
+  ttsVoice?: string
   onCopy: () => void
   onRegenerate?: () => void
   onEditResend?: (newContent: string) => void
@@ -85,6 +87,8 @@ const MessageBubble = React.memo(function MessageBubble({
   message,
   isStreaming = false,
   agentIcon,
+  ttsEnabled = false,
+  ttsVoice,
   onCopy,
   onRegenerate,
   onEditResend,
@@ -216,13 +220,7 @@ const MessageBubble = React.memo(function MessageBubble({
             <CopyIcon />
             {copied ? 'Copied!' : 'Copy'}
           </button>
-          <button
-            onClick={() => speakText(message.content)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-            title="Read aloud"
-          >
-            🔊
-          </button>
+          <TtsButton text={message.content} ttsEnabled={ttsEnabled} voice={ttsVoice} />
           {onRegenerate && !isStreaming && (
             <button
               onClick={onRegenerate}

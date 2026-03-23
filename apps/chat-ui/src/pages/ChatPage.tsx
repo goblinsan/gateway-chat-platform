@@ -8,6 +8,7 @@ import HandoffModal from '../components/HandoffModal'
 import PromptLibrary from '../components/PromptLibrary'
 import FileAttachment from '../components/FileAttachment'
 import MicButton from '../components/SpeechControls'
+import { useTts } from '../hooks/useTts'
 
 interface ChatPageProps {
   activeAgentId: string
@@ -47,6 +48,7 @@ export default function ChatPage({
   const [compareLoading, setCompareLoading] = useState(false)
   const [showHandoff, setShowHandoff] = useState(false)
   const [showPromptLibrary, setShowPromptLibrary] = useState(false)
+  const tts = useTts()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -314,6 +316,20 @@ export default function ChatPage({
               🔄 Hand off
             </button>
           )}
+          {tts.enabled && tts.voices.length > 0 && (
+            <select
+              value={tts.selectedVoice}
+              onChange={(e) => tts.setSelectedVoice(e.target.value)}
+              className="text-xs bg-gray-800 border border-gray-700 text-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              title="TTS voice"
+            >
+              {tts.voices.map((v) => (
+                <option key={v.id} value={v.id}>
+                  🔊 {v.name ?? v.id}
+                </option>
+              ))}
+            </select>
+          )}
         </header>
       ) : (
         <header className="flex-shrink-0 border-b border-gray-800 px-6 py-3 text-sm text-gray-500 bg-gray-900">
@@ -346,6 +362,8 @@ export default function ChatPage({
             message={msg}
             isStreaming={msg.id === streamingMessageId}
             agentIcon={msg.role === 'assistant' ? activeAgent?.icon : undefined}
+            ttsEnabled={tts.enabled}
+            ttsVoice={tts.selectedVoice}
             onCopy={() => { /* handled inside MessageBubble */ }}
             onRegenerate={
               msg.role === 'assistant' && isLastAssistantMessage(msg) && !isStreaming
