@@ -64,6 +64,14 @@ export class LmStudioAdapter implements ProviderAdapter {
     return chunks.join('')
   }
 
+  private sanitizeLlama3Text(text: string): string {
+    return text
+      .replace(/^<\|start_header_id\|>assistant<\|end_header_id\|>\s*/u, '')
+      .split('<|eot_id|>')[0]
+      .split('<|end_of_text|>')[0]
+      .trim()
+  }
+
   private async _doSendChat(request: ChatRequest): Promise<ChatResponse> {
     const chatTemplate = this.getChatTemplate(request)
     const requestOptions = this.getRequestOptions(request)
@@ -78,6 +86,7 @@ export class LmStudioAdapter implements ProviderAdapter {
             temperature: request.temperature,
             max_tokens: request.maxTokens,
             stream: false,
+            stop: ['<|eot_id|>', '<|end_of_text|>', '<|start_header_id|>'],
             ...requestOptions,
           }),
         }),
@@ -90,6 +99,9 @@ export class LmStudioAdapter implements ProviderAdapter {
       }
 
       const data = (await response.json()) as OpenAICompletionResponse
+      if (typeof data.choices?.[0]?.text === 'string') {
+        data.choices[0].text = this.sanitizeLlama3Text(data.choices[0].text)
+      }
       return normalizeCompletionResponse(data)
     }
 
@@ -125,29 +137,22 @@ export class LmStudioAdapter implements ProviderAdapter {
     const chatTemplate = this.getChatTemplate(request)
     const requestOptions = this.getRequestOptions(request)
     if (chatTemplate === 'llama3' || chatTemplate === 'llama-3') {
-      const response = await withTimeout(
-        fetch(`${this.baseUrl}/v1/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: request.model,
-            prompt: this.buildLlama3Prompt(request.messages),
-            temperature: request.temperature,
-            max_tokens: request.maxTokens,
-            stream: true,
+      try {
+        const completion = await this._doSendChat({
+          ...request,
+          modelParams: {
             ...requestOptions,
-          }),
-        }),
-        this.timeoutMs,
-      )
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        onEvent({ type: 'error', error: `HTTP ${response.status}: ${text}` })
-        return
+            chatTemplate,
+          },
+        })
+        if (completion.message.content) {
+          onEvent({ type: 'token', token: completion.message.content })
+        }
+        onEvent({ type: 'done', finishReason: completion.finishReason ?? undefined, usage: completion.usage })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        onEvent({ type: 'error', error: message })
       }
-
-      await readSseStream(response, onEvent)
       return
     }
 

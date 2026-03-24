@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { apiClient } from './client'
 
 export interface TtsHealthResponse {
@@ -32,8 +33,28 @@ export async function synthesizeSpeech(
   voice?: string,
   format = 'wav',
 ): Promise<{ audioUrl: string; revoke: () => void }> {
-  const res = await apiClient.post('/tts', { text, voice, format }, { responseType: 'blob' })
-  const blob = res.data as Blob
-  const audioUrl = URL.createObjectURL(blob)
-  return { audioUrl, revoke: () => URL.revokeObjectURL(audioUrl) }
+  try {
+    const res = await apiClient.post('/tts', { text, voice, format }, { responseType: 'blob' })
+    const blob = res.data as Blob
+    const audioUrl = URL.createObjectURL(blob)
+    return { audioUrl, revoke: () => URL.revokeObjectURL(audioUrl) }
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status
+      const responseData = error.response?.data
+      if (responseData instanceof Blob) {
+        const text = await responseData.text().catch(() => '')
+        if (text) {
+          try {
+            const parsed = JSON.parse(text) as { error?: string; message?: string }
+            throw new Error(parsed.error || parsed.message || `TTS request failed with status ${status ?? 'unknown'}`)
+          } catch {
+            throw new Error(text)
+          }
+        }
+      }
+      throw new Error(`TTS request failed with status ${status ?? 'unknown'}`)
+    }
+    throw error
+  }
 }
