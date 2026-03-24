@@ -79,7 +79,7 @@ CF_ACCESS_AUD=
 
 # TTS service (optional — provided by local-tts-service)
 TTS_ENABLED=false
-TTS_BASE_URL=http://192.168.0.111:5000
+TTS_BASE_URL=http://192.168.0.172:5000
 TTS_DEFAULT_VOICE=assistant_v1
 TTS_GENERATE_PATH=/tts
 TTS_STREAM_PATH=/tts/stream
@@ -141,6 +141,7 @@ pnpm --filter @gateway/chat-ui preview
 | `POST` | `/api/files` | Attach a file to a conversation |
 | `POST` | `/api/prompts` | Manage saved prompts |
 | `GET` | `/api/providers/status` | Health-check all providers |
+| `GET` | `/api/providers/:name/models` | List loaded models for one configured provider |
 | `GET` | `/api/health` | Service health and uptime |
 | `POST` | `/api/agents/:id/run` | Non-interactive automation run (scheduler / control-plane) |
 | `GET` | `/api/tts/health` | TTS service health and upstream status |

@@ -41,7 +41,7 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === 'true' || v === '1')
     .default('false'),
-  TTS_BASE_URL: z.string().default('http://192.168.0.111:5000'),
+  TTS_BASE_URL: z.string().default('http://192.168.0.172:5000'),
   TTS_DEFAULT_VOICE: z.string().default('assistant_v1'),
   TTS_GENERATE_PATH: z.string().default('/tts'),
   TTS_STREAM_PATH: z.string().default('/tts/stream'),

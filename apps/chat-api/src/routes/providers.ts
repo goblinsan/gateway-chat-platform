@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { getEnv } from '../config/env'
 import { checkProvider } from '../services/providerCheck'
 import { type KnownProviderName } from '../config/providers'
+import { getProviderRegistry } from '../config/providerRegistry'
 
 interface ProviderTestResult {
   name: string
@@ -62,5 +63,23 @@ export default async function providerRoutes(app: FastifyInstance) {
     const result = await checkProvider(name, provider.baseUrl ?? '', provider.apiKey)
     // baseUrl is intentionally omitted from the response (#55)
     return reply.send({ name, ...result })
+  })
+
+  app.get('/providers/:name/models', async (req, reply) => {
+    const { name } = req.params as { name: string }
+    const registry = getProviderRegistry()
+    const adapter = registry.get(name)
+    if (!adapter) {
+      return reply.status(404).send({ error: `Provider '${name}' is not configured` })
+    }
+
+    try {
+      const models = await adapter.listModels()
+      return reply.send({ provider: name, models })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load models'
+      req.log.error({ err, provider: name }, 'Provider model listing failed')
+      return reply.status(502).send({ error: message })
+    }
   })
 }
