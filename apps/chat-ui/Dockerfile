@@ -17,5 +17,5 @@ RUN pnpm --filter @gateway/chat-ui build
 # ---- Serve stage ----
 FROM nginx:1.25-alpine
 COPY --from=builder /app/apps/chat-ui/dist /usr/share/nginx/html
-COPY infra/nginx/nginx.conf /etc/nginx/conf.d/default.conf
+COPY apps/chat-ui/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
