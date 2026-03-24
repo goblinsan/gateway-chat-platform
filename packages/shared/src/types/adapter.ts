@@ -10,6 +10,7 @@ export interface ChatRequest {
   messages: ProviderMessage[]
   temperature?: number
   maxTokens?: number
+  modelParams?: Record<string, unknown>
   tools?: ToolDefinition[]
 }
 

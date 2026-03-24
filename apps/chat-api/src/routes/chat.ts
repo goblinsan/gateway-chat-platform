@@ -99,6 +99,7 @@ export default async function chatRoutes(app: FastifyInstance) {
         messages: providerMessages,
         temperature: agent.temperature,
         maxTokens: agent.maxTokens,
+        modelParams: agent.endpointConfig?.modelParams,
       })
       const latencyMs = Date.now() - startTime
 
@@ -238,6 +239,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             messages: providerMessages,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
+            modelParams: agent.endpointConfig?.modelParams,
           },
           (event) => {
             if (event.type === 'token' && event.token !== undefined) {

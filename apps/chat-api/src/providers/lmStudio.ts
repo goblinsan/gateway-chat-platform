@@ -9,9 +9,11 @@ import type {
 import { withRetry, withTimeout } from '../utils/retry'
 import {
   normalizeChatResponse,
+  normalizeCompletionResponse,
   normalizeModel,
   readSseStream,
   type OpenAIChatResponse,
+  type OpenAICompletionResponse,
   type OpenAIModelsResponse,
 } from './normalize'
 
@@ -35,7 +37,62 @@ export class LmStudioAdapter implements ProviderAdapter {
     return withRetry(() => this._doSendChat(request), { maxAttempts: 2, initialDelayMs: 500 })
   }
 
+  private getModelParams(request: ChatRequest): Record<string, unknown> {
+    return request.modelParams && typeof request.modelParams === 'object' ? request.modelParams : {}
+  }
+
+  private getChatTemplate(request: ChatRequest): string | undefined {
+    const value = this.getModelParams(request).chatTemplate
+    return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : undefined
+  }
+
+  private getRequestOptions(request: ChatRequest): Record<string, unknown> {
+    const params = { ...this.getModelParams(request) }
+    delete params.chatTemplate
+    delete params.ttsVoiceId
+    return params
+  }
+
+  private buildLlama3Prompt(messages: ChatRequest['messages']): string {
+    const chunks = ['<|begin_of_text|>']
+    for (const message of messages) {
+      chunks.push(
+        `<|start_header_id|>${message.role}<|end_header_id|>\n\n${message.content}<|eot_id|>`,
+      )
+    }
+    chunks.push('<|start_header_id|>assistant<|end_header_id|>\n\n')
+    return chunks.join('')
+  }
+
   private async _doSendChat(request: ChatRequest): Promise<ChatResponse> {
+    const chatTemplate = this.getChatTemplate(request)
+    const requestOptions = this.getRequestOptions(request)
+    if (chatTemplate === 'llama3' || chatTemplate === 'llama-3') {
+      const response = await withTimeout(
+        fetch(`${this.baseUrl}/v1/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: request.model,
+            prompt: this.buildLlama3Prompt(request.messages),
+            temperature: request.temperature,
+            max_tokens: request.maxTokens,
+            stream: false,
+            ...requestOptions,
+          }),
+        }),
+        this.timeoutMs,
+      )
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(`HTTP ${response.status}: ${text}`)
+      }
+
+      const data = (await response.json()) as OpenAICompletionResponse
+      return normalizeCompletionResponse(data)
+    }
+
     const response = await withTimeout(
       fetch(`${this.baseUrl}/v1/chat/completions`, {
         method: 'POST',
@@ -46,6 +103,7 @@ export class LmStudioAdapter implements ProviderAdapter {
           temperature: request.temperature,
           max_tokens: request.maxTokens,
           stream: false,
+          ...requestOptions,
         }),
       }),
       this.timeoutMs,
@@ -64,6 +122,35 @@ export class LmStudioAdapter implements ProviderAdapter {
     request: ChatRequest,
     onEvent: (event: StreamEvent) => void,
   ): Promise<void> {
+    const chatTemplate = this.getChatTemplate(request)
+    const requestOptions = this.getRequestOptions(request)
+    if (chatTemplate === 'llama3' || chatTemplate === 'llama-3') {
+      const response = await withTimeout(
+        fetch(`${this.baseUrl}/v1/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: request.model,
+            prompt: this.buildLlama3Prompt(request.messages),
+            temperature: request.temperature,
+            max_tokens: request.maxTokens,
+            stream: true,
+            ...requestOptions,
+          }),
+        }),
+        this.timeoutMs,
+      )
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        onEvent({ type: 'error', error: `HTTP ${response.status}: ${text}` })
+        return
+      }
+
+      await readSseStream(response, onEvent)
+      return
+    }
+
     const response = await withTimeout(
       fetch(`${this.baseUrl}/v1/chat/completions`, {
         method: 'POST',
@@ -74,6 +161,7 @@ export class LmStudioAdapter implements ProviderAdapter {
           temperature: request.temperature,
           max_tokens: request.maxTokens,
           stream: true,
+          ...requestOptions,
         }),
       }),
       this.timeoutMs,

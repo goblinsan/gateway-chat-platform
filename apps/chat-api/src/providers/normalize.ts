@@ -27,6 +27,29 @@ export interface OpenAIChatResponse {
   usage?: OpenAIUsage
 }
 
+export interface OpenAICompletionChoice {
+  text?: string | null
+  finish_reason: string | null
+  index: number
+}
+
+export interface OpenAICompletionResponse {
+  id: string
+  model: string
+  choices: OpenAICompletionChoice[]
+  usage?: OpenAIUsage
+}
+
+function isChatChoice(choice: OpenAIChoice | OpenAICompletionChoice | undefined): choice is OpenAIChoice {
+  return Boolean(choice && typeof choice === 'object' && 'delta' in choice)
+}
+
+function isCompletionChoice(
+  choice: OpenAIChoice | OpenAICompletionChoice | undefined,
+): choice is OpenAICompletionChoice {
+  return Boolean(choice && typeof choice === 'object' && 'text' in choice)
+}
+
 export interface OpenAIModel {
   id: string
   object: string
@@ -80,6 +103,22 @@ export function normalizeChatResponse(raw: OpenAIChatResponse): ChatResponse {
   }
 }
 
+/** Converts a full OpenAI completion response to the normalized ChatResponse. */
+export function normalizeCompletionResponse(raw: OpenAICompletionResponse): ChatResponse {
+  const choice = raw.choices[0]
+  const content = choice?.text ?? ''
+  return {
+    id: raw.id,
+    model: raw.model,
+    message: {
+      role: 'assistant',
+      content,
+    },
+    finishReason: normalizeFinishReason(choice?.finish_reason),
+    usage: normalizeUsage(raw.usage),
+  }
+}
+
 /** Converts a raw OpenAI model entry to the normalized ModelInfo. */
 export function normalizeModel(raw: OpenAIModel): ModelInfo {
   return { id: raw.id, name: raw.id }
@@ -95,9 +134,9 @@ export function parseStreamLine(line: string): StreamEvent | null {
   if (data === '[DONE]') return { type: 'done' }
 
   try {
-    const parsed = JSON.parse(data) as OpenAIChatResponse
+    const parsed = JSON.parse(data) as OpenAIChatResponse | OpenAICompletionResponse
     const choice = parsed.choices?.[0]
-    const delta = choice?.delta
+    const delta = isChatChoice(choice) ? choice.delta : undefined
 
     if (choice?.finish_reason) {
       return {
@@ -109,6 +148,10 @@ export function parseStreamLine(line: string): StreamEvent | null {
 
     if (delta?.content) {
       return { type: 'token', token: delta.content }
+    }
+
+    if (isCompletionChoice(choice) && typeof choice.text === 'string' && choice.text.length > 0) {
+      return { type: 'token', token: choice.text }
     }
 
     // Skip reasoning_content during streaming — it's the model's internal

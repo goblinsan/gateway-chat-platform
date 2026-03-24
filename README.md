@@ -290,7 +290,10 @@ The management endpoints under `/api/agents/manage` allow an external config ser
   "endpointConfig": {
     "baseUrl": "http://192.168.0.172:1234",
     "apiKey": "sk-...",
-    "modelParams": { "top_p": 0.9 }
+    "modelParams": {
+      "top_p": 0.9,
+      "chatTemplate": "llama3"
+    }
   },
 
   // Context / memory sources the agent should use
@@ -304,6 +307,13 @@ The management endpoints under `/api/agents/manage` allow an external config ser
   ]
 }
 ```
+
+For LM Studio-backed agents, `endpointConfig.modelParams.chatTemplate` can be
+used to force a manual prompt format for models that do not behave correctly
+with the default OpenAI-style chat message format. Supported values currently
+include:
+
+- `llama3`
 
 #### Examples
 

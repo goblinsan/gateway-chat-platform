@@ -9,7 +9,7 @@ interface TtsButtonProps {
 }
 
 export default function TtsButton({ text, ttsEnabled, voice }: TtsButtonProps) {
-  const [state, setState] = useState<'idle' | 'loading' | 'playing'>('idle')
+  const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle')
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const revokeRef = useRef<(() => void) | null>(null)
 
@@ -52,17 +52,14 @@ export default function TtsButton({ text, ttsEnabled, voice }: TtsButtonProps) {
 
       audio.onended = () => setState('idle')
       audio.onerror = () => {
-        setState('idle')
-        // Fall back to browser speech on playback error
-        speakText(text)
+        setState('error')
       }
 
       await audio.play()
       setState('playing')
-    } catch {
-      setState('idle')
-      // Fall back to browser speech if server TTS fails
-      speakText(text)
+    } catch (error) {
+      console.error('[TtsButton] Server TTS failed', error)
+      setState('error')
     }
   }, [state, text, ttsEnabled, voice])
 
@@ -74,14 +71,22 @@ export default function TtsButton({ text, ttsEnabled, voice }: TtsButtonProps) {
           ? 'text-blue-400 hover:text-blue-300'
           : state === 'loading'
             ? 'text-yellow-400 animate-pulse cursor-wait'
-            : 'text-gray-500 hover:text-gray-300'
+            : state === 'error'
+              ? 'text-red-400 hover:text-red-300'
+              : 'text-gray-500 hover:text-gray-300'
       }`}
       title={
-        state === 'playing' ? 'Stop' : state === 'loading' ? 'Synthesizing…' : 'Read aloud'
+        state === 'playing'
+          ? 'Stop'
+          : state === 'loading'
+            ? 'Synthesizing…'
+            : state === 'error'
+              ? 'Server TTS failed'
+              : 'Read aloud'
       }
       disabled={state === 'loading'}
     >
-      {state === 'playing' ? '⏹' : '🔊'}
+      {state === 'playing' ? '⏹' : state === 'error' ? '⚠️' : '🔊'}
     </button>
   )
 }

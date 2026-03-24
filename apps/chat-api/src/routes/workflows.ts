@@ -107,6 +107,7 @@ export default async function workflowsRoutes(app: FastifyInstance) {
             messages: providerMessages,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
+            modelParams: agent.endpointConfig?.modelParams,
           })
           results.push({
             step,

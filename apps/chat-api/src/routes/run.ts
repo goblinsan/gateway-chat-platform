@@ -94,6 +94,7 @@ export default async function agentRunRoutes(app: FastifyInstance) {
           messages: providerMessages,
           temperature: agent.temperature,
           maxTokens: agent.maxTokens,
+          modelParams: agent.endpointConfig?.modelParams,
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Agent execution failed'
