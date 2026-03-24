@@ -34,3 +34,17 @@ describe('GET /api/health', () => {
     expect(body.dependencies).toBeDefined()
   })
 })
+
+
+describe('GET /api/ready', () => {
+  it('returns ready response', async () => {
+    const app = Fastify()
+    await app.register(healthRoutes, { prefix: '/api' })
+
+    const res = await app.inject({ method: 'GET', url: '/api/ready' })
+    expect(res.statusCode).toBe(200)
+
+    const body = JSON.parse(res.payload)
+    expect(body.status).toBe('ready')
+  })
+})

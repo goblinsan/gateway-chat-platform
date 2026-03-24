@@ -18,6 +18,10 @@ interface HealthResponse {
 }
 
 export default async function healthRoutes(app: FastifyInstance) {
+  app.get('/ready', async (_req, reply) => {
+    return reply.status(200).send({ status: 'ready', uptime: process.uptime() })
+  })
+
   app.get('/health', async (_req, reply) => {
     const env = getEnv()
     const dependencies: Record<string, DependencyStatus> = {}
