@@ -52,13 +52,13 @@ export default async function adminRoutes(app: FastifyInstance) {
       ])
 
       return reply.send({
-        requestsByAgent: requestsByAgent.map((r) => ({
+        requestsByAgent: requestsByAgent.map((r: (typeof requestsByAgent)[number]) => ({
           agentId: r.agentId,
           requestCount: r._count.id,
           totalTokens: r._sum.totalTokens ?? 0,
           totalCostUsd: r._sum.estimatedCostUsd ?? 0,
         })),
-        costByProvider: costByProvider.map((r) => ({
+        costByProvider: costByProvider.map((r: (typeof costByProvider)[number]) => ({
           provider: r.provider,
           requestCount: r._count.id,
           totalTokens: r._sum.totalTokens ?? 0,

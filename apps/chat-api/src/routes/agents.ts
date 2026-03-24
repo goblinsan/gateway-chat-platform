@@ -83,9 +83,9 @@ export default async function agentRoutes(app: FastifyInstance) {
     const registry = getAgentRegistry()
     try {
       const config: AgentConfig = {
-        icon: '🤖',
-        color: '#6366f1',
         ...req.body,
+        icon: req.body.icon ?? '🤖',
+        color: req.body.color ?? '#6366f1',
       }
       const created = await registry.create(config)
       req.log.info({ agentId: created.id }, 'Agent created')

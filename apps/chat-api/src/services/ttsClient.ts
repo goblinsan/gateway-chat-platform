@@ -21,6 +21,19 @@ interface TtsVoicesResult {
   voices: TtsVoice[]
 }
 
+function extractVoices(payload: unknown): TtsVoice[] {
+  if (Array.isArray(payload)) {
+    return payload as TtsVoice[]
+  }
+
+  if (payload && typeof payload === 'object' && 'voices' in payload) {
+    const voices = (payload as { voices?: unknown }).voices
+    return Array.isArray(voices) ? (voices as TtsVoice[]) : []
+  }
+
+  return []
+}
+
 interface TtsSynthesizeOptions {
   text: string
   voice?: string
@@ -78,7 +91,7 @@ export async function listVoices(): Promise<TtsVoicesResult> {
     throw new Error(`TTS voices request failed: ${res.status} ${body.slice(0, 200)}`)
   }
   const data = await res.json()
-  const voices: TtsVoice[] = Array.isArray(data) ? data : data.voices ?? []
+  const voices = extractVoices(data)
   return { enabled: true, voices }
 }
 
