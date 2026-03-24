@@ -48,7 +48,7 @@ export default function ChatPage({
   const [compareLoading, setCompareLoading] = useState(false)
   const [showHandoff, setShowHandoff] = useState(false)
   const [showPromptLibrary, setShowPromptLibrary] = useState(false)
-  const tts = useTts()
+  const tts = useTts(activeAgent?.ttsVoiceId)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 

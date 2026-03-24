@@ -11,7 +11,16 @@ function toPublicItem(agent: AgentConfig): AgentListItem {
     contextSources: _c,
     ...rest
   } = agent
-  return rest
+  const ttsVoiceId =
+    agent.endpointConfig?.modelParams &&
+    typeof agent.endpointConfig.modelParams.ttsVoiceId === 'string'
+      ? agent.endpointConfig.modelParams.ttsVoiceId
+      : undefined
+
+  return {
+    ...rest,
+    ...(ttsVoiceId ? { ttsVoiceId } : {}),
+  }
 }
 
 /**

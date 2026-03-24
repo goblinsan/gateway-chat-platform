@@ -57,7 +57,9 @@ export interface AgentConfig {
  * Public agent metadata returned by GET /api/agents.
  * Sensitive fields are deliberately omitted to keep them server-side.
  */
-export type AgentListItem = Omit<AgentConfig, 'systemPrompt' | 'routingPolicy' | 'endpointConfig' | 'contextSources'>
+export interface AgentListItem extends Omit<AgentConfig, 'systemPrompt' | 'routingPolicy' | 'endpointConfig' | 'contextSources'> {
+  ttsVoiceId?: string
+}
 
 export interface AgentMessage {
   role: 'user' | 'assistant' | 'system'

@@ -10,10 +10,10 @@ export interface TtsState {
   loading: boolean
 }
 
-export function useTts(): TtsState {
+export function useTts(preferredVoice?: string): TtsState {
   const [enabled, setEnabled] = useState(false)
   const [voices, setVoices] = useState<TtsVoice[]>([])
-  const [selectedVoice, setSelectedVoice] = useState('assistant_v1')
+  const [selectedVoice, setSelectedVoice] = useState('')
   const [loading, setLoading] = useState(true)
 
   const loadTts = useCallback(async () => {
@@ -39,6 +39,22 @@ export function useTts(): TtsState {
   useEffect(() => {
     void loadTts()
   }, [loadTts])
+
+  useEffect(() => {
+    if (voices.length === 0) {
+      return
+    }
+
+    setSelectedVoice((current) => {
+      if (current && voices.some((voice) => voice.id === current)) {
+        return current
+      }
+      if (preferredVoice && voices.some((voice) => voice.id === preferredVoice)) {
+        return preferredVoice
+      }
+      return voices[0]?.id ?? current
+    })
+  }, [voices, preferredVoice])
 
   return { enabled, voices, selectedVoice, setSelectedVoice, loading }
 }
