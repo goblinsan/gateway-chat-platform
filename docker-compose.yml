@@ -10,6 +10,12 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: "0.0.0.0"
+    volumes:
+      - ${CHAT_API_DATA_DIR:-./.data/chat-api}:/app/data
+    command: >
+      sh -lc "mkdir -p /app/data
+      && pnpm --filter @gateway/chat-api prisma:migrate
+      && node apps/chat-api/dist/server.js"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 30s
