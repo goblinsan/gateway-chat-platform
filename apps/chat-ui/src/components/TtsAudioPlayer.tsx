@@ -56,7 +56,15 @@ export default function TtsAudioPlayer({
       setCurrentTime(0)
     }
     audio.onerror = () => setState('error')
-    audio.play().then(() => setState('playing')).catch(() => setState('error'))
+    audio.play().then(() => setState('playing')).catch((err: unknown) => {
+      // If the browser blocked autoplay (common on mobile), stay in 'idle' so the
+      // user sees the play button and can tap to start rather than an error state.
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        setState('idle')
+      } else {
+        setState('error')
+      }
+    })
   }, [])
 
   // Auto-play when audio is newly synthesized (not pre-loaded from a saved session)
