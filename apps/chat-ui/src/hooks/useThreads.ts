@@ -55,6 +55,7 @@ export function useThreads() {
         title: firstUserMessage.slice(0, 60),
         createdAt: Date.now(),
         messages: [],
+        ttsEnabled: true,
       }
       setThreads((prev) => [thread, ...prev])
       return thread

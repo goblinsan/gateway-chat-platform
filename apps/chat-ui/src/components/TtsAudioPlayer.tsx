@@ -36,6 +36,9 @@ export default function TtsAudioPlayer({
     [audioBase64],
   )
 
+  // Track previous audioSrc to detect when audio is newly synthesized vs. pre-loaded
+  const prevAudioSrcRef = useRef<string | null>(audioSrc)
+
   useEffect(() => {
     return () => {
       audioRef.current?.pause()
@@ -55,6 +58,15 @@ export default function TtsAudioPlayer({
     audio.onerror = () => setState('error')
     audio.play().then(() => setState('playing')).catch(() => setState('error'))
   }, [])
+
+  // Auto-play when audio is newly synthesized (not pre-loaded from a saved session)
+  useEffect(() => {
+    const prev = prevAudioSrcRef.current
+    prevAudioSrcRef.current = audioSrc
+    if (audioSrc && !prev) {
+      playFromSrc(audioSrc)
+    }
+  }, [audioSrc, playFromSrc])
 
   const handleClick = useCallback(async () => {
     if (state === 'playing') {
