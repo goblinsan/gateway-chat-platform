@@ -20,6 +20,7 @@ function ChatLayout() {
 
   const [activeAgentId, setActiveAgentId] = useState<string>('')
   const [showWorkflows, setShowWorkflows] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const {
     threads,
@@ -28,6 +29,8 @@ function ChatLayout() {
     createThread,
     addMessage,
     updateLastAssistantMessage,
+    updateMessageTtsAudio,
+    setThreadTtsEnabled,
     setThreadMessages,
     deleteThread,
   } = useThreads()
@@ -69,12 +72,28 @@ function ChatLayout() {
         threads={threads}
         activeThreadId={activeThreadId}
         activeAgentId={activeAgentId}
-        onSelectThread={handleSelectThread}
-        onNewChat={handleNewChat}
+        isOpen={sidebarOpen}
+        onSelectThread={(id) => { handleSelectThread(id); setSidebarOpen(false) }}
+        onNewChat={() => { handleNewChat(); setSidebarOpen(false) }}
         onDeleteThread={deleteThread}
         onWorkflows={() => setShowWorkflows((v) => !v)}
+        onClose={() => setSidebarOpen(false)}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Mobile top bar with hamburger */}
+        <div className="flex items-center gap-2 md:hidden border-b border-gray-800 px-3 py-2 bg-gray-900">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-2 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+            aria-label="Open menu"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <span className="text-sm font-semibold text-gray-100">Gateway Chat</span>
+        </div>
+
         {isLoading ? (
           <div className="border-b border-gray-800 px-6 py-3 text-gray-500 text-sm">
             Loading agents…
@@ -97,6 +116,8 @@ function ChatLayout() {
           onAddMessage={addMessage}
           onUpdateLastAssistantMessage={updateLastAssistantMessage}
           onSetThreadMessages={setThreadMessages}
+          onUpdateMessageTtsAudio={updateMessageTtsAudio}
+          onSetThreadTtsEnabled={setThreadTtsEnabled}
         />
         {showWorkflows && (
           <WorkflowPanel agents={agents} onClose={() => setShowWorkflows(false)} />

@@ -28,6 +28,37 @@ export async function fetchTtsVoices(): Promise<TtsVoicesResponse> {
   return data
 }
 
+export async function synthesizeSpeechToBase64(
+  text: string,
+  voice?: string,
+  format = 'wav',
+): Promise<{ base64: string; mimeType: string }> {
+  const { audioUrl, revoke } = await synthesizeSpeech(text, voice, format)
+  try {
+    const response = await fetch(audioUrl)
+    const blob = await response.blob()
+    return await new Promise<{ base64: string; mimeType: string }>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        revoke()
+        const dataUrl = reader.result as string
+        const comma = dataUrl.indexOf(',')
+        const header = dataUrl.slice(0, comma)
+        const base64 = dataUrl.slice(comma + 1)
+        const mimeType = header.match(/:(.*?);/)?.[1] ?? 'audio/wav'
+        resolve({ base64, mimeType })
+      }
+      reader.onerror = () => {
+        revoke()
+        reject(new Error('Failed to read audio blob'))
+      }
+      reader.readAsDataURL(blob)
+    })
+  } catch (err) {
+    revoke()
+    throw err
+  }
+}
 export async function synthesizeSpeech(
   text: string,
   voice?: string,

@@ -6,7 +6,6 @@ export interface TtsState {
   enabled: boolean
   voices: TtsVoice[]
   selectedVoice: string
-  setSelectedVoice: (v: string) => void
   loading: boolean
 }
 
@@ -56,5 +55,5 @@ export function useTts(preferredVoice?: string): TtsState {
     })
   }, [voices, preferredVoice])
 
-  return { enabled, voices, selectedVoice, setSelectedVoice, loading }
+  return { enabled, voices, selectedVoice, loading }
 }

@@ -9,6 +9,7 @@ import PromptLibrary from '../components/PromptLibrary'
 import FileAttachment from '../components/FileAttachment'
 import MicButton from '../components/SpeechControls'
 import { useTts } from '../hooks/useTts'
+import { synthesizeSpeechToBase64 } from '../api/tts'
 
 interface ChatPageProps {
   activeAgentId: string
@@ -21,6 +22,8 @@ interface ChatPageProps {
   onAddMessage: (threadId: string, msg: Omit<ThreadMessage, 'id' | 'createdAt'>) => ThreadMessage
   onUpdateLastAssistantMessage: (threadId: string, content: string, meta?: MessageMeta) => void
   onSetThreadMessages: (threadId: string, messages: ThreadMessage[]) => void
+  onUpdateMessageTtsAudio: (threadId: string, messageId: string, audioBase64: string) => void
+  onSetThreadTtsEnabled: (threadId: string, enabled: boolean) => void
 }
 
 type SSEEvent =
@@ -39,6 +42,8 @@ export default function ChatPage({
   onAddMessage,
   onUpdateLastAssistantMessage,
   onSetThreadMessages,
+  onUpdateMessageTtsAudio,
+  onSetThreadTtsEnabled,
 }: ChatPageProps) {
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -52,8 +57,20 @@ export default function ChatPage({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const activeThread = threads.find((t) => t.id === activeThreadId)
-  const messages = useMemo(() => activeThread?.messages ?? [], [activeThread])
+  // Keep a ref to the active thread's TTS state so doStream doesn't need threads in its deps
+  const activeThreadTtsRef = useRef<{ enabled: boolean; voice: string }>({ enabled: false, voice: '' })
+  useEffect(() => {
+    const thread = threads.find((t) => t.id === activeThreadId)
+    activeThreadTtsRef.current = {
+      enabled: (thread?.ttsEnabled ?? false) && tts.enabled,
+      voice: tts.selectedVoice,
+    }
+  }, [threads, activeThreadId, tts.enabled, tts.selectedVoice])
+
+  const messages = useMemo(
+    () => threads.find((t) => t.id === activeThreadId)?.messages ?? [],
+    [threads, activeThreadId],
+  )
 
   // Auto-scroll to bottom during streaming and when messages change
   useEffect(() => {
@@ -136,6 +153,15 @@ export default function ChatPage({
         if (!accumulated && !errorReceived) {
           onUpdateLastAssistantMessage(threadId, '⚠️ No response received.')
         }
+
+        // Auto-synthesize TTS if enabled for this thread and we got a successful response
+        if (accumulated && !errorReceived && activeThreadTtsRef.current.enabled) {
+          synthesizeSpeechToBase64(accumulated, activeThreadTtsRef.current.voice).then(({ base64 }) => {
+            onUpdateMessageTtsAudio(threadId, placeholder.id, base64)
+          }).catch((err) => {
+            console.warn('[ChatPage] Auto-TTS synthesis failed', err)
+          })
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Network error'
         onUpdateLastAssistantMessage(threadId, `⚠️ ${msg}`)
@@ -144,7 +170,7 @@ export default function ChatPage({
         setStreamingMessageId(null)
       }
     },
-    [onAddMessage, onUpdateLastAssistantMessage],
+    [onAddMessage, onUpdateLastAssistantMessage, onUpdateMessageTtsAudio],
   )
 
   const handleSend = useCallback(async (): Promise<void> => {
@@ -277,6 +303,14 @@ export default function ChatPage({
     [handleSend],
   )
 
+  const activeThread = threads.find((t) => t.id === activeThreadId)
+  const threadTtsEnabled = activeThread?.ttsEnabled ?? false
+
+  const handleToggleThreadTts = useCallback(() => {
+    if (!activeThreadId) return
+    onSetThreadTtsEnabled(activeThreadId, !threadTtsEnabled)
+  }, [activeThreadId, threadTtsEnabled, onSetThreadTtsEnabled])
+
   const isLastAssistantMessage = useCallback(
     (message: ThreadMessage): boolean => {
       const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
@@ -289,18 +323,18 @@ export default function ChatPage({
     <main className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Active agent header */}
       {activeAgent ? (
-        <header className="flex-shrink-0 flex items-center gap-3 border-b border-gray-800 px-6 py-3 bg-gray-900">
+        <header className="flex-shrink-0 flex items-center gap-2 border-b border-gray-800 px-4 py-3 bg-gray-900">
           <span className="text-2xl select-none" aria-hidden="true">
             {activeAgent.icon}
           </span>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-base font-semibold truncate">{activeAgent.name}</h1>
-              <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
+              <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 hidden sm:inline">
                 {activeAgent.costClass}
               </span>
             </div>
-            <p className="text-xs text-gray-400 truncate">
+            <p className="text-xs text-gray-400 truncate hidden sm:block">
               {activeAgent.model} · {activeAgent.providerName}
               {activeAgent.enableReasoning && (
                 <span className="ml-2 text-amber-400">reasoning</span>
@@ -310,29 +344,30 @@ export default function ChatPage({
           {activeThreadId && messages.length > 0 && (
             <button
               onClick={() => setShowHandoff(true)}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors min-h-[40px]"
               title="Hand off conversation"
             >
-              🔄 Hand off
+              🔄 <span className="hidden sm:inline">Hand off</span>
             </button>
           )}
-          {tts.enabled && tts.voices.length > 0 && (
-            <select
-              value={tts.selectedVoice}
-              onChange={(e) => tts.setSelectedVoice(e.target.value)}
-              className="text-xs bg-gray-800 border border-gray-700 text-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              title="TTS voice"
+          {/* Per-thread TTS toggle */}
+          {tts.enabled && (
+            <button
+              onClick={handleToggleThreadTts}
+              disabled={!activeThreadId}
+              className={`flex items-center gap-1 px-2 py-2 rounded-lg text-sm transition-colors min-h-[40px] disabled:opacity-40 ${
+                threadTtsEnabled
+                  ? 'bg-blue-700 text-white hover:bg-blue-600'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+              }`}
+              title={threadTtsEnabled ? 'TTS on — click to disable' : 'TTS off — click to enable'}
             >
-              {tts.voices.map((v) => (
-                <option key={v.id} value={v.id}>
-                  🔊 {v.name ?? v.id}
-                </option>
-              ))}
-            </select>
+              {threadTtsEnabled ? '🔊' : '🔇'}
+            </button>
           )}
         </header>
       ) : (
-        <header className="flex-shrink-0 border-b border-gray-800 px-6 py-3 text-sm text-gray-500 bg-gray-900">
+        <header className="flex-shrink-0 border-b border-gray-800 px-4 py-3 text-sm text-gray-500 bg-gray-900">
           Select an agent to begin
         </header>
       )}
@@ -364,6 +399,7 @@ export default function ChatPage({
             agentIcon={msg.role === 'assistant' ? activeAgent?.icon : undefined}
             ttsEnabled={tts.enabled}
             ttsVoice={tts.selectedVoice}
+            ttsActive={threadTtsEnabled}
             onCopy={() => { /* handled inside MessageBubble */ }}
             onRegenerate={
               msg.role === 'assistant' && isLastAssistantMessage(msg) && !isStreaming
@@ -375,20 +411,25 @@ export default function ChatPage({
                 ? (newContent) => { void handleEditResend(msg.id, newContent) }
                 : undefined
             }
+            onAudioStored={
+              msg.role === 'assistant' && activeThreadId
+                ? (base64) => onUpdateMessageTtsAudio(activeThreadId, msg.id, base64)
+                : undefined
+            }
           />
         ))}
         <div ref={messagesEndRef} />
       </section>
 
       {/* Input bar */}
-      <footer className="flex-shrink-0 border-t border-gray-800 p-4 bg-gray-950">
+      <footer className="flex-shrink-0 border-t border-gray-800 p-3 bg-gray-950">
         <div className="flex items-center gap-2 mb-2">
           <FileAttachment threadId={activeThreadId} />
           <div className="flex-1" />
           <button
             type="button"
             onClick={() => setShowPromptLibrary((v) => !v)}
-            className="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded hover:bg-gray-800 transition-colors"
+            className="text-sm text-gray-500 hover:text-gray-300 px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors min-h-[40px] min-w-[40px] flex items-center justify-center"
             title="Prompt library"
           >
             📚
@@ -396,16 +437,16 @@ export default function ChatPage({
           <button
             type="button"
             onClick={toggleCompareMode}
-            className={`text-xs px-2 py-1 rounded transition-colors ${compareMode ? 'bg-indigo-700 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
+            className={`text-sm px-3 py-2 rounded-lg transition-colors min-h-[40px] flex items-center gap-1 ${compareMode ? 'bg-indigo-700 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}
             title="Compare mode"
           >
-            ⊞ Compare
+            ⊞ <span className="hidden sm:inline">Compare</span>
           </button>
         </div>
-        <div className="flex gap-3 items-end">
+        <div className="flex gap-2 items-end">
           <textarea
             ref={textareaRef}
-            className="flex-1 resize-none rounded-xl bg-gray-900 border border-gray-700 px-4 py-3 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent overflow-y-auto leading-relaxed"
+            className="flex-1 resize-none rounded-2xl bg-gray-900 border border-gray-700 px-4 py-3 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent overflow-y-auto leading-relaxed"
             placeholder={
               activeAgent ? `Message ${activeAgent.name}…` : 'Select an agent first…'
             }
@@ -424,20 +465,20 @@ export default function ChatPage({
             <button
               onClick={() => { void handleCompare() }}
               disabled={!input.trim() || !activeAgentId || compareLoading}
-              className="px-4 py-3 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+              className="w-12 h-12 rounded-full bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0 flex items-center justify-center touch-manipulation"
             >
-              {compareLoading ? <span className="animate-pulse">…</span> : '⊞'}
+              {compareLoading ? <span className="animate-pulse text-lg">…</span> : '⊞'}
             </button>
           ) : (
             <button
               onClick={() => { void handleSend() }}
               disabled={!input.trim() || !activeAgentId || isStreaming}
-              className="px-4 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+              className="w-12 h-12 rounded-full bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0 flex items-center justify-center touch-manipulation"
             >
               {isStreaming ? (
-                <span className="animate-pulse">…</span>
+                <span className="animate-pulse text-lg">…</span>
               ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                 </svg>
               )}

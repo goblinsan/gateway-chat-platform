@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react'
 import type { ThreadMessage, MessageMeta } from '../types/chat'
 import MarkdownContent from './MarkdownContent'
-import TtsButton from './TtsButton'
+import TtsAudioPlayer from './TtsAudioPlayer'
 
 interface MessageBubbleProps {
   message: ThreadMessage
@@ -9,9 +9,11 @@ interface MessageBubbleProps {
   agentIcon?: string
   ttsEnabled?: boolean
   ttsVoice?: string
+  ttsActive?: boolean
   onCopy: () => void
   onRegenerate?: () => void
   onEditResend?: (newContent: string) => void
+  onAudioStored?: (base64: string) => void
 }
 
 const COST_BADGE: Record<string, string> = {
@@ -89,9 +91,11 @@ const MessageBubble = React.memo(function MessageBubble({
   agentIcon,
   ttsEnabled = false,
   ttsVoice,
+  ttsActive = false,
   onCopy,
   onRegenerate,
   onEditResend,
+  onAudioStored,
 }: MessageBubbleProps) {
   const [editing, setEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
@@ -139,7 +143,7 @@ const MessageBubble = React.memo(function MessageBubble({
   if (message.role === 'user') {
     return (
       <div className="flex justify-end group">
-        <div className="flex flex-col items-end max-w-[75%]">
+        <div className="flex flex-col items-end max-w-[85%] sm:max-w-[75%]">
           {editing ? (
             <div className="w-full flex flex-col gap-2">
               <textarea
@@ -148,19 +152,19 @@ const MessageBubble = React.memo(function MessageBubble({
                 onChange={(e) => setEditContent(e.target.value)}
                 onKeyDown={handleEditKeyDown}
                 rows={3}
-                className="w-full resize-none rounded-xl bg-gray-800 border border-blue-500 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full resize-none rounded-2xl bg-gray-800 border border-blue-500 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <div className="flex gap-2 justify-end">
                 <button
                   onClick={handleCancelEdit}
-                  className="px-3 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors"
+                  className="px-4 py-2 text-sm rounded-xl border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors min-h-[40px]"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleResend}
                   disabled={!editContent.trim()}
-                  className="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition-colors"
+                  className="px-4 py-2 text-sm rounded-xl bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 transition-colors min-h-[40px]"
                 >
                   Resend
                 </button>
@@ -168,13 +172,13 @@ const MessageBubble = React.memo(function MessageBubble({
             </div>
           ) : (
             <>
-              <div className="relative bg-blue-600 text-white rounded-xl rounded-br-sm px-4 py-3 text-sm whitespace-pre-wrap">
+              <div className="relative bg-blue-600 text-white rounded-2xl rounded-br-sm px-4 py-3 text-sm whitespace-pre-wrap">
                 {message.content}
               </div>
               {onEditResend && (
                 <button
                   onClick={handleStartEdit}
-                  className="mt-1 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="mt-1 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity min-h-[32px] px-2"
                   title="Edit and resend"
                 >
                   <EditIcon />
@@ -190,16 +194,17 @@ const MessageBubble = React.memo(function MessageBubble({
 
   // Assistant message
   const meta = message.meta
+  const shouldShowTtsPlayer = ttsActive && !isStreaming && Boolean(message.content)
   return (
     <div className="flex justify-start gap-3 group">
       {agentIcon && (
-        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-base mt-1 select-none">
+        <div className="flex-shrink-0 w-9 h-9 rounded-full bg-gray-800 flex items-center justify-center text-base mt-1 select-none">
           {agentIcon}
         </div>
       )}
-      <div className="flex flex-col items-start max-w-[80%]">
+      <div className="flex flex-col items-start max-w-[85%] sm:max-w-[80%]">
         <div
-          className={`bg-gray-800 text-gray-100 rounded-xl rounded-bl-sm px-4 py-3 text-sm prose prose-invert prose-sm max-w-none ${
+          className={`bg-gray-800 text-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 text-sm prose prose-invert prose-sm max-w-none ${
             isStreaming ? 'streaming-cursor' : ''
           }`}
         >
@@ -208,27 +213,37 @@ const MessageBubble = React.memo(function MessageBubble({
           ) : isStreaming ? null : (
             <span className="text-gray-500">…</span>
           )}
+
+          {/* Inline TTS audio player — only shown when TTS is active for this chat */}
+          {shouldShowTtsPlayer && (
+            <TtsAudioPlayer
+              text={message.content}
+              ttsEnabled={ttsEnabled}
+              voice={ttsVoice}
+              audioBase64={message.ttsAudioBase64}
+              onAudioStored={onAudioStored}
+            />
+          )}
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1.5 rounded-lg hover:bg-gray-800 min-h-[36px]"
             title="Copy"
           >
             <CopyIcon />
-            {copied ? 'Copied!' : 'Copy'}
+            <span className="hidden sm:inline">{copied ? 'Copied!' : 'Copy'}</span>
           </button>
-          <TtsButton text={message.content} ttsEnabled={ttsEnabled} voice={ttsVoice} />
           {onRegenerate && !isStreaming && (
             <button
               onClick={onRegenerate}
-              className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-1.5 rounded-lg hover:bg-gray-800 min-h-[36px]"
               title="Regenerate"
             >
               <RefreshIcon />
-              Regenerate
+              <span className="hidden sm:inline">Regenerate</span>
             </button>
           )}
         </div>
