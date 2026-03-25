@@ -4,6 +4,7 @@ export interface ChatThread {
   title: string
   createdAt: number
   messages: ThreadMessage[]
+  ttsEnabled?: boolean
 }
 
 export interface ThreadMessage {
@@ -12,6 +13,7 @@ export interface ThreadMessage {
   content: string
   createdAt: number
   meta?: MessageMeta
+  ttsAudioBase64?: string
 }
 
 export interface MessageMeta {

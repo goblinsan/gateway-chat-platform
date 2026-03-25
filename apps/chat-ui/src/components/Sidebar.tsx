@@ -14,10 +14,12 @@ interface SidebarProps {
   threads: ChatThread[]
   activeThreadId: string | null
   activeAgentId: string
+  isOpen: boolean
   onSelectThread: (threadId: string) => void
   onNewChat: () => void
   onDeleteThread: (threadId: string) => void
   onWorkflows: () => void
+  onClose: () => void
 }
 
 function formatDate(ts: number): string {
@@ -42,10 +44,12 @@ const Sidebar = React.memo(function Sidebar({
   threads,
   activeThreadId,
   activeAgentId,
+  isOpen,
   onSelectThread,
   onNewChat,
   onDeleteThread,
   onWorkflows,
+  onClose,
 }: SidebarProps) {
   const [providerStatus, setProviderStatus] = useState<ProviderStatusEntry[]>([])
   const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null)
@@ -72,11 +76,39 @@ const Sidebar = React.memo(function Sidebar({
   const sortedThreads = [...threads].sort((a, b) => b.createdAt - a.createdAt)
 
   return (
-    <aside className="hidden md:flex w-60 flex-shrink-0 flex-col bg-gray-900 border-r border-gray-800 h-full overflow-hidden">
+    <>
+      {/* Mobile backdrop */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/60 md:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        role="dialog"
+        aria-modal={isOpen ? true : undefined}
+        aria-label="Navigation menu"
+        className={`fixed md:relative z-30 md:z-auto inset-y-0 left-0 w-72 md:w-60 flex-shrink-0 flex flex-col bg-gray-900 border-r border-gray-800 h-full overflow-hidden transition-transform duration-200 ease-in-out ${
+          isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        }`}
+      >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-4 border-b border-gray-800">
         <span className="text-xl select-none" aria-hidden="true">⚡</span>
-        <span className="text-sm font-semibold text-gray-100">Gateway Chat</span>
+        <span className="text-sm font-semibold text-gray-100 flex-1">Gateway Chat</span>
+        {/* Close button — visible only on mobile */}
+        <button
+          onClick={onClose}
+          className="md:hidden p-1 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors"
+          title="Close menu"
+          aria-label="Close menu"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
       </div>
 
       {/* New Chat button */}
@@ -170,7 +202,8 @@ const Sidebar = React.memo(function Sidebar({
           </div>
         </div>
       )}
-    </aside>
+      </aside>
+    </>
   )
 })
 

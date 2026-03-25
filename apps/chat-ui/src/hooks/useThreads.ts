@@ -113,6 +113,32 @@ export function useThreads() {
     [setThreads],
   )
 
+  const updateMessageTtsAudio = useCallback(
+    (threadId: string, messageId: string, audioBase64: string): void => {
+      setThreads((prev) =>
+        prev.map((t) => {
+          if (t.id !== threadId) return t
+          return {
+            ...t,
+            messages: t.messages.map((m) =>
+              m.id === messageId ? { ...m, ttsAudioBase64: audioBase64 } : m,
+            ),
+          }
+        }),
+      )
+    },
+    [setThreads],
+  )
+
+  const setThreadTtsEnabled = useCallback(
+    (threadId: string, enabled: boolean): void => {
+      setThreads((prev) =>
+        prev.map((t) => (t.id === threadId ? { ...t, ttsEnabled: enabled } : t)),
+      )
+    },
+    [setThreads],
+  )
+
   const getThread = useCallback(
     (threadId: string): ChatThread | undefined => {
       return threads.find((t) => t.id === threadId)
@@ -127,6 +153,8 @@ export function useThreads() {
     createThread,
     addMessage,
     updateLastAssistantMessage,
+    updateMessageTtsAudio,
+    setThreadTtsEnabled,
     setThreadMessages,
     deleteThread,
     getThread,
