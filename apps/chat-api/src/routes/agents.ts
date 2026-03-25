@@ -152,7 +152,7 @@ export default async function agentRoutes(app: FastifyInstance) {
         type: 'object',
         required: ['agents'],
         properties: {
-          agents: { type: 'array', minItems: 1, maxItems: 100 },
+          agents: { type: 'array', minItems: 0, maxItems: 100 },
         },
       },
     },
