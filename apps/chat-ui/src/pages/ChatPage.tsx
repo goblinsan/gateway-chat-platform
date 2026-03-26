@@ -446,7 +446,7 @@ export default function ChatPage({
         <div className="flex gap-2 items-end">
           <textarea
             ref={textareaRef}
-            className="flex-1 resize-none rounded-2xl bg-gray-900 border border-gray-700 px-4 py-3 text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent overflow-y-auto leading-relaxed"
+            className="flex-1 resize-none rounded-2xl bg-gray-900 border border-gray-700 px-4 py-3 text-base md:text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent overflow-y-auto leading-relaxed"
             placeholder={
               activeAgent ? `Message ${activeAgent.name}…` : 'Select an agent first…'
             }

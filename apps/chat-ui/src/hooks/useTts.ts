@@ -45,12 +45,16 @@ export function useTts(preferredVoice?: string): TtsState {
     }
 
     setSelectedVoice((current) => {
-      if (current && voices.some((voice) => voice.id === current)) {
-        return current
-      }
+      // Priority 1: Use preferred voice (from agent config) if available — ensures
+      // switching agents applies the new agent's configured voice.
       if (preferredVoice && voices.some((voice) => voice.id === preferredVoice)) {
         return preferredVoice
       }
+      // Priority 2: Keep current voice if still available and no preferred voice configured
+      if (current && voices.some((voice) => voice.id === current)) {
+        return current
+      }
+      // Priority 3: Fall back to first available voice
       return voices[0]?.id ?? current
     })
   }, [voices, preferredVoice])
