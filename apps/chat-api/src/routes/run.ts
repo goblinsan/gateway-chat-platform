@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import type { AgentRunRequest, AgentRunResponse } from '@gateway/shared'
 import type { ProviderMessage } from '@gateway/shared'
@@ -5,11 +6,12 @@ import { getAgent } from '../agents/registry'
 import { getProviderRegistry } from '../config/providerRegistry'
 import { getEnv } from '../config/env'
 import { getPrismaClient } from '../services/db'
-import { persistUsageLog } from '../services/persistence'
+import { upsertConversation, persistMessage, persistUsageLog } from '../services/persistence'
 import { estimateCostUsd } from '../services/costEstimator'
 import { resolveProviderChain, estimatePromptTokens } from '../routing'
 import { buildAutomationMessages } from '../services/automationContext'
 import { synthesize } from '../services/ttsClient'
+import { syncAgentConversationToNotes } from '../services/notesSync'
 
 const runBodySchema = {
   type: 'object',
@@ -138,6 +140,15 @@ export default async function agentRunRoutes(app: FastifyInstance) {
 
       // Persist usage log asynchronously
       const prisma = getPrismaClient()
+      const metadata = context?.metadata && typeof context.metadata === 'object'
+        ? context.metadata as Record<string, unknown>
+        : undefined
+      const threadId = typeof metadata?.threadId === 'string' && metadata.threadId.trim()
+        ? metadata.threadId.trim()
+        : undefined
+      const threadTitle = typeof metadata?.threadTitle === 'string' && metadata.threadTitle.trim()
+        ? metadata.threadTitle.trim()
+        : prompt.slice(0, 60) || 'Automation Conversation'
       const estimatedCostUsd = result.response.usage
         ? estimateCostUsd(
             result.response.model ?? agent.model,
@@ -147,7 +158,27 @@ export default async function agentRunRoutes(app: FastifyInstance) {
         : 0
       void (async () => {
         try {
+          if (threadId) {
+            await upsertConversation(prisma, {
+              id: threadId,
+              agentId,
+              title: threadTitle,
+            })
+            await persistMessage(prisma, {
+              id: randomUUID(),
+              conversationId: threadId,
+              role: 'user',
+              content: prompt,
+            })
+            await persistMessage(prisma, {
+              id: randomUUID(),
+              conversationId: threadId,
+              role: 'assistant',
+              content: response.content,
+            })
+          }
           await persistUsageLog(prisma, {
+            ...(threadId ? { conversationId: threadId } : {}),
             agentId,
             provider: result.usedProvider,
             model: result.response.model ?? agent.model,
@@ -157,6 +188,14 @@ export default async function agentRunRoutes(app: FastifyInstance) {
             estimatedCostUsd,
             latencyMs,
           })
+          if (threadId) {
+            await syncAgentConversationToNotes(agent, {
+              threadId,
+              source: 'automation',
+              userMessage: prompt,
+              assistantMessage: response.content,
+            })
+          }
         } catch (err) {
           req.log.warn({ err }, 'Failed to persist automation usage log')
         }

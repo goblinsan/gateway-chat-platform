@@ -17,6 +17,13 @@ vi.mock('../agents/registry', () => {
         allowedProviders: ['lm-studio-a', 'lm-studio-b'],
         maxCostClass: 'free',
       },
+      endpointConfig: {
+        modelParams: {
+          notesSync: {
+            repoPath: '/opt/notes',
+          },
+        },
+      },
       enabled: true,
     },
   ]
@@ -52,14 +59,27 @@ vi.mock('../config/providerRegistry', () => ({
   getProviderRegistry: () => MOCK_REGISTRY,
 }))
 
+const mockUpsertConversation = vi.fn()
+const mockPersistMessage = vi.fn()
+const mockPersistUsageLog = vi.fn()
+const mockSyncAgentConversationToNotes = vi.fn()
+
 vi.mock('../services/db', () => ({
   getPrismaClient: () => ({
+    conversation: {},
+    message: {},
     usageLog: { create: vi.fn() },
   }),
 }))
 
 vi.mock('../services/persistence', () => ({
-  persistUsageLog: vi.fn(),
+  upsertConversation: (...args: unknown[]) => mockUpsertConversation(...args),
+  persistMessage: (...args: unknown[]) => mockPersistMessage(...args),
+  persistUsageLog: (...args: unknown[]) => mockPersistUsageLog(...args),
+}))
+
+vi.mock('../services/notesSync', () => ({
+  syncAgentConversationToNotes: (...args: unknown[]) => mockSyncAgentConversationToNotes(...args),
 }))
 
 vi.mock('../services/costEstimator', () => ({
@@ -216,6 +236,32 @@ describe('POST /api/agents/:id/run', () => {
     const body = JSON.parse(res.payload)
     expect(body.agentId).toBe('local-analyst')
     expect(body.content).toBe('Analysis complete.')
+  })
+
+  it('syncs automation runs into notes when metadata provides a thread id', async () => {
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/local-analyst/run',
+      payload: {
+        prompt: 'Morning check-in for the ANCR plan.',
+        context: {
+          source: 'ancr-coach',
+          metadata: {
+            threadId: 'ancr-coach-thread',
+            threadTitle: 'ANCR Coach',
+          },
+        },
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(mockUpsertConversation).toHaveBeenCalled()
+    expect(mockPersistMessage).toHaveBeenCalled()
+    expect(mockSyncAgentConversationToNotes).toHaveBeenCalled()
   })
 
   it('response shape matches AgentRunResponse', async () => {

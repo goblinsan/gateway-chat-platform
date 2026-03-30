@@ -1,13 +1,15 @@
+import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import type { AgentChatRequest, AgentChatResponse, AgentStreamDoneEvent, RoutingExplanation } from '@gateway/shared'
 import type { ProviderMessage } from '@gateway/shared'
 import { getAgent } from '../agents/registry'
 import { getProviderRegistry } from '../config/providerRegistry'
 import { getPrismaClient } from '../services/db'
-import { upsertConversation, persistUsageLog } from '../services/persistence'
+import { upsertConversation, persistMessage, persistUsageLog } from '../services/persistence'
 import { estimateCostUsd } from '../services/costEstimator'
 import { resolveProviderChain, estimatePromptTokens } from '../routing'
 import { getBuiltInTools, dispatchTool } from '../tools/registry'
+import { syncAgentConversationToNotes } from '../services/notesSync'
 
 const bodySchema = {
   type: 'object',
@@ -128,10 +130,25 @@ export default async function chatRoutes(app: FastifyInstance) {
           : 0
         void (async () => {
           try {
+            const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')
             await upsertConversation(prisma, {
               id: threadId,
               agentId,
               title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
+            })
+            if (latestUserMessage) {
+              await persistMessage(prisma, {
+                id: randomUUID(),
+                conversationId: threadId,
+                role: 'user',
+                content: latestUserMessage.content,
+              })
+            }
+            await persistMessage(prisma, {
+              id: randomUUID(),
+              conversationId: threadId,
+              role: 'assistant',
+              content: result.response.message.content,
             })
             await persistUsageLog(prisma, {
               conversationId: threadId,
@@ -144,6 +161,14 @@ export default async function chatRoutes(app: FastifyInstance) {
               estimatedCostUsd,
               latencyMs,
             })
+            if (latestUserMessage) {
+              await syncAgentConversationToNotes(agent, {
+                threadId,
+                source: 'chat',
+                userMessage: latestUserMessage.content,
+                assistantMessage: result.response.message.content,
+              })
+            }
           } catch (err) {
             req.log.warn({ err }, 'Failed to persist conversation data')
           }
