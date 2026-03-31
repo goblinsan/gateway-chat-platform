@@ -106,7 +106,7 @@ export default function ChatPage({
         const response = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentId, messages: messagesToSend }),
+          body: JSON.stringify({ agentId, threadId, messages: messagesToSend }),
         })
 
         if (!response.ok || !response.body) {

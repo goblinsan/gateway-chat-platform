@@ -1,8 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { ChatThread, ThreadMessage, MessageMeta } from '../types/chat'
 
-const STORAGE_KEY = 'gateway-chat-threads'
-
 function makeId(): string {
   const cryptoApi = globalThis.crypto
   if (cryptoApi?.randomUUID) {
@@ -18,9 +16,9 @@ function makeId(): string {
   return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-function loadThreads(): ChatThread[] {
+function loadThreads(storageKey: string): ChatThread[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(storageKey)
     return raw ? (JSON.parse(raw) as ChatThread[]) : []
   } catch (err) {
     console.warn('[useThreads] Failed to load threads from localStorage:', err)
@@ -28,17 +26,18 @@ function loadThreads(): ChatThread[] {
   }
 }
 
-export function useThreads() {
-  const [threads, setThreadsState] = useState<ChatThread[]>(() => loadThreads())
+export function useThreads(scopeKey: string) {
+  const storageKey = `gateway-chat-threads:${scopeKey}`
+  const [threads, setThreadsState] = useState<ChatThread[]>(() => loadThreads(storageKey))
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(threads))
+      localStorage.setItem(storageKey, JSON.stringify(threads))
     } catch {
       // localStorage might be unavailable in some environments
     }
-  }, [threads])
+  }, [threads, storageKey])
 
   const setThreads = useCallback(
     (updater: (prev: ChatThread[]) => ChatThread[]) => {
@@ -58,6 +57,28 @@ export function useThreads() {
         ttsEnabled: true,
       }
       setThreads((prev) => [thread, ...prev])
+      return thread
+    },
+    [setThreads],
+  )
+
+  const upsertThread = useCallback(
+    (thread: ChatThread): ChatThread => {
+      setThreads((prev) => {
+        const existing = prev.find((item) => item.id === thread.id)
+        if (!existing) {
+          return [thread, ...prev]
+        }
+        return prev.map((item) =>
+          item.id === thread.id
+            ? {
+                ...existing,
+                ...thread,
+                messages: existing.messages,
+              }
+            : item,
+        )
+      })
       return thread
     },
     [setThreads],
@@ -152,6 +173,7 @@ export function useThreads() {
     activeThreadId,
     setActiveThreadId,
     createThread,
+    upsertThread,
     addMessage,
     updateLastAssistantMessage,
     updateMessageTtsAudio,

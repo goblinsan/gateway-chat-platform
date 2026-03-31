@@ -47,6 +47,11 @@ const envSchema = z.object({
   TTS_STREAM_PATH: z.string().default('/tts/stream'),
   TTS_VOICES_PATH: z.string().default('/voices'),
   TTS_HEALTH_PATH: z.string().default('/health'),
+
+  // Scheduled inbox delivery
+  REDIS_URL: z.string().optional(),
+  CHAT_DEFAULT_USER_ID: z.string().default('me'),
+  CHAT_DEFAULT_CHANNEL_ID: z.string().default('coach'),
 })
 
 export type Env = z.infer<typeof envSchema>

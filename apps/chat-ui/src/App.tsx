@@ -3,13 +3,27 @@ import { Routes, Route } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
 import type { AgentListItem, AgentsListResponse } from '@gateway/shared'
+import type { InboxItem } from '@gateway/shared'
 import ChatPage from './pages/ChatPage'
 import HealthPage from './pages/HealthPage'
 import AdminPage from './pages/AdminPage'
 import Sidebar from './components/Sidebar'
 import AgentTabs from './components/AgentTabs'
 import WorkflowPanel from './components/WorkflowPanel'
+import InboxPanel from './components/InboxPanel'
 import { useThreads } from './hooks/useThreads'
+import { useInbox, type ChatInboxScope } from './hooks/useInbox'
+
+function resolveInboxScope(): ChatInboxScope {
+  try {
+    return {
+      userId: localStorage.getItem('gateway-chat-user-id')?.trim() || 'me',
+      channelId: localStorage.getItem('gateway-chat-channel-id')?.trim() || 'coach',
+    }
+  } catch {
+    return { userId: 'me', channelId: 'coach' }
+  }
+}
 
 function ChatLayout() {
   const { data, isLoading } = useQuery<AgentsListResponse>({
@@ -20,20 +34,25 @@ function ChatLayout() {
 
   const [activeAgentId, setActiveAgentId] = useState<string>('')
   const [showWorkflows, setShowWorkflows] = useState(false)
+  const [showInbox, setShowInbox] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [inboxScope] = useState<ChatInboxScope>(() => resolveInboxScope())
 
   const {
     threads,
     activeThreadId,
     setActiveThreadId,
     createThread,
+    upsertThread,
     addMessage,
     updateLastAssistantMessage,
     updateMessageTtsAudio,
     setThreadTtsEnabled,
     setThreadMessages,
     deleteThread,
-  } = useThreads()
+    getThread,
+  } = useThreads(inboxScope.userId)
+  const inbox = useInbox(inboxScope)
 
   // Select first agent once loaded
   useEffect(() => {
@@ -65,6 +84,41 @@ function ChatLayout() {
     }
   }
 
+  const handleOpenInboxItem = async (item: InboxItem) => {
+    const threadId = item.threadId || `inbox-${item.id}`
+    const existingThread = getThread(threadId)
+
+    upsertThread({
+      id: threadId,
+      agentId: item.agentId,
+      title: item.threadTitle || item.title || existingThread?.title || 'Inbox',
+      createdAt: existingThread?.createdAt ?? (Date.parse(item.createdAt) || Date.now()),
+      messages: existingThread?.messages ?? [],
+      ttsEnabled: existingThread?.ttsEnabled ?? true,
+    })
+
+    const alreadyInserted = existingThread?.messages.some(
+      (message) => message.meta?.inboxMessageId === item.id,
+    )
+    if (!alreadyInserted) {
+      addMessage(threadId, {
+        role: 'assistant',
+        content: item.content,
+        meta: {
+          inboxMessageId: item.id,
+          inboxKind: item.kind,
+          inboxChannelId: item.channelId,
+        },
+      })
+    }
+
+    setActiveAgentId(item.agentId)
+    setActiveThreadId(threadId)
+    setShowInbox(false)
+    setSidebarOpen(false)
+    await inbox.acknowledge(item.id)
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
       <Sidebar
@@ -77,6 +131,8 @@ function ChatLayout() {
         onNewChat={() => { handleNewChat(); setSidebarOpen(false) }}
         onDeleteThread={deleteThread}
         onWorkflows={() => setShowWorkflows((v) => !v)}
+        unreadCount={inbox.unreadCount}
+        onInbox={() => setShowInbox((value) => !value)}
         onClose={() => setSidebarOpen(false)}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -92,6 +148,13 @@ function ChatLayout() {
             </svg>
           </button>
           <span className="text-sm font-semibold text-gray-100">Gateway Chat</span>
+          <button
+            type="button"
+            onClick={() => setShowInbox((value) => !value)}
+            className="ml-auto px-2.5 py-1 border border-gray-700 text-xs text-gray-300"
+          >
+            Inbox {inbox.unreadCount > 0 ? `(${inbox.unreadCount})` : ''}
+          </button>
         </div>
 
         {isLoading ? (
@@ -123,6 +186,17 @@ function ChatLayout() {
           <WorkflowPanel agents={agents} onClose={() => setShowWorkflows(false)} />
         )}
       </div>
+      <InboxPanel
+        isOpen={showInbox}
+        items={inbox.items}
+        unreadCount={inbox.unreadCount}
+        loading={inbox.loading}
+        error={inbox.error}
+        scopeLabel={`${inboxScope.userId} / ${inboxScope.channelId}`}
+        onRefresh={() => { void inbox.refresh() }}
+        onOpenItem={(item) => { void handleOpenInboxItem(item) }}
+        onClose={() => setShowInbox(false)}
+      />
     </div>
   )
 }

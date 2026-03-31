@@ -17,6 +17,9 @@ export interface ThreadMessage {
 }
 
 export interface MessageMeta {
+  inboxMessageId?: string
+  inboxKind?: string
+  inboxChannelId?: string
   model?: string
   usedProvider?: string
   latencyMs?: number

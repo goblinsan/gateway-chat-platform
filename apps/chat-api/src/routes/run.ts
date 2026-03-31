@@ -12,6 +12,7 @@ import { resolveProviderChain, estimatePromptTokens } from '../routing'
 import { buildAutomationMessages } from '../services/automationContext'
 import { synthesize } from '../services/ttsClient'
 import { syncAgentConversationToNotes } from '../services/notesSync'
+import { publishInboxMessage } from '../services/inbox'
 
 const runBodySchema = {
   type: 'object',
@@ -34,6 +35,12 @@ const runBodySchema = {
         to: { type: 'string', maxLength: 256 },
         voice: { type: 'string', maxLength: 128 },
         format: { type: 'string', maxLength: 16 },
+        userId: { type: 'string', maxLength: 128 },
+        channelId: { type: 'string', maxLength: 128 },
+        threadId: { type: 'string', maxLength: 128 },
+        threadTitle: { type: 'string', maxLength: 256 },
+        title: { type: 'string', maxLength: 256 },
+        kind: { type: 'string', maxLength: 64 },
       },
     },
   },
@@ -114,6 +121,9 @@ export default async function agentRunRoutes(app: FastifyInstance) {
         latencyMs,
         ...(result.response.usage ? { usage: result.response.usage } : {}),
       }
+      const metadata = context?.metadata && typeof context.metadata === 'object'
+        ? context.metadata as Record<string, unknown>
+        : undefined
 
       // If TTS delivery requested, synthesize audio and attach metadata
       if (delivery?.mode === 'tts') {
@@ -138,11 +148,40 @@ export default async function agentRunRoutes(app: FastifyInstance) {
         }
       }
 
+      if (delivery?.mode === 'inbox') {
+        const inboxItem = await publishInboxMessage({
+          userId: typeof delivery.userId === 'string' ? delivery.userId : undefined,
+          channelId: typeof delivery.channelId === 'string' ? delivery.channelId : undefined,
+          agentId,
+          content: response.content,
+          kind: typeof delivery.kind === 'string' ? delivery.kind : 'coach_prompt',
+          threadId:
+            typeof delivery.threadId === 'string'
+              ? delivery.threadId
+              : typeof metadata?.threadId === 'string'
+                ? metadata.threadId
+                : undefined,
+          threadTitle:
+            typeof delivery.threadTitle === 'string'
+              ? delivery.threadTitle
+              : typeof metadata?.threadTitle === 'string'
+                ? metadata.threadTitle
+                : undefined,
+          title: typeof delivery.title === 'string' ? delivery.title : undefined,
+          metadata: {
+            ...(context?.workflowId ? { workflowId: context.workflowId } : {}),
+            ...(context?.source ? { source: context.source } : {}),
+          },
+        })
+        response.inbox = {
+          messageId: inboxItem.id,
+          userId: inboxItem.userId,
+          channelId: inboxItem.channelId,
+        }
+      }
+
       // Persist usage log asynchronously
       const prisma = getPrismaClient()
-      const metadata = context?.metadata && typeof context.metadata === 'object'
-        ? context.metadata as Record<string, unknown>
-        : undefined
       const threadId = typeof metadata?.threadId === 'string' && metadata.threadId.trim()
         ? metadata.threadId.trim()
         : undefined

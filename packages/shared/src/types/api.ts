@@ -130,6 +130,12 @@ export interface AgentRunRequest {
     to?: string
     voice?: string
     format?: string
+    userId?: string
+    channelId?: string
+    threadId?: string
+    threadTitle?: string
+    title?: string
+    kind?: string
   }
 }
 
@@ -142,6 +148,11 @@ export interface AgentRunResponse {
   latencyMs: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
   tts?: TtsResultMetadata
+  inbox?: {
+    messageId: string
+    userId: string
+    channelId: string
+  }
 }
 
 /** Metadata returned when an automation run includes TTS delivery */
@@ -171,4 +182,26 @@ export interface TtsSynthesizeRequest {
   text: string
   voice?: string
   format?: string
+}
+
+export interface InboxItem {
+  id: string
+  userId: string
+  channelId: string
+  agentId: string
+  content: string
+  createdAt: string
+  kind: string
+  threadId?: string
+  threadTitle?: string
+  title?: string
+  metadata?: Record<string, unknown>
+  read: boolean
+}
+
+export interface InboxListResponse {
+  userId: string
+  channelId: string
+  unreadCount: number
+  items: InboxItem[]
 }

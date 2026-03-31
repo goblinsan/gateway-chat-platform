@@ -63,6 +63,7 @@ const mockUpsertConversation = vi.fn()
 const mockPersistMessage = vi.fn()
 const mockPersistUsageLog = vi.fn()
 const mockSyncAgentConversationToNotes = vi.fn()
+const mockPublishInboxMessage = vi.fn()
 
 vi.mock('../services/db', () => ({
   getPrismaClient: () => ({
@@ -80,6 +81,10 @@ vi.mock('../services/persistence', () => ({
 
 vi.mock('../services/notesSync', () => ({
   syncAgentConversationToNotes: (...args: unknown[]) => mockSyncAgentConversationToNotes(...args),
+}))
+
+vi.mock('../services/inbox', () => ({
+  publishInboxMessage: (...args: unknown[]) => mockPublishInboxMessage(...args),
 }))
 
 vi.mock('../services/costEstimator', () => ({
@@ -108,6 +113,11 @@ import agentRunRoutes from '../routes/run'
 beforeEach(() => {
   vi.clearAllMocks()
   mockEnv.TTS_ENABLED = false
+  mockPublishInboxMessage.mockResolvedValue({
+    id: 'inbox-1',
+    userId: 'me',
+    channelId: 'coach',
+  })
   MOCK_REGISTRY.sendChatWithChain.mockResolvedValue({
     response: {
       id: 'resp-1',
@@ -236,6 +246,49 @@ describe('POST /api/agents/:id/run', () => {
     const body = JSON.parse(res.payload)
     expect(body.agentId).toBe('local-analyst')
     expect(body.content).toBe('Analysis complete.')
+  })
+
+  it('publishes automation output to the inbox when delivery.mode=inbox', async () => {
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/local-analyst/run',
+      payload: {
+        prompt: 'Morning ANCR check-in.',
+        context: {
+          workflowId: 'wf-ancr-morning',
+          source: 'scheduler',
+          metadata: {
+            threadId: 'ancr-coach-me',
+            threadTitle: 'ANCR Coach',
+          },
+        },
+        delivery: {
+          mode: 'inbox',
+          userId: 'me',
+          channelId: 'coach',
+          title: 'Morning Coach',
+        },
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.inbox).toEqual({
+      messageId: 'inbox-1',
+      userId: 'me',
+      channelId: 'coach',
+    })
+    expect(mockPublishInboxMessage).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'me',
+      channelId: 'coach',
+      agentId: 'local-analyst',
+      threadId: 'ancr-coach-me',
+      threadTitle: 'ANCR Coach',
+      title: 'Morning Coach',
+    }))
   })
 
   it('syncs automation runs into notes when metadata provides a thread id', async () => {

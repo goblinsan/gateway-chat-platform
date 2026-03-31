@@ -19,6 +19,8 @@ interface SidebarProps {
   onNewChat: () => void
   onDeleteThread: (threadId: string) => void
   onWorkflows: () => void
+  unreadCount: number
+  onInbox: () => void
   onClose: () => void
 }
 
@@ -49,6 +51,8 @@ const Sidebar = React.memo(function Sidebar({
   onNewChat,
   onDeleteThread,
   onWorkflows,
+  unreadCount,
+  onInbox,
   onClose,
 }: SidebarProps) {
   const [providerStatus, setProviderStatus] = useState<ProviderStatusEntry[]>([])
@@ -126,6 +130,20 @@ const Sidebar = React.memo(function Sidebar({
         >
           <span className="text-base" aria-hidden="true">⚙</span>
           Workflows
+        </button>
+        <button
+          onClick={onInbox}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition-colors mt-1"
+        >
+          <span className="flex items-center gap-2">
+            <span className="text-base" aria-hidden="true">✉️</span>
+            Inbox
+          </span>
+          {unreadCount > 0 ? (
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              {unreadCount}
+            </span>
+          ) : null}
         </button>
       </div>
 
