@@ -56,8 +56,8 @@ export default function ModelPicker({ value, agentModel, onChange, disabled, lab
         if (r.status === 'fulfilled') combined.push(...r.value)
       }
       setProviderModels(combined)
-    } catch {
-      // silently ignore model-fetch errors
+    } catch (err) {
+      console.warn('[ModelPicker] Failed to fetch models:', err)
     } finally {
       setLoading(false)
     }

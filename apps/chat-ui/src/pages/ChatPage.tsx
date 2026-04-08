@@ -77,6 +77,11 @@ export default function ChatPage({
     [threads, activeThreadId],
   )
 
+  const activeThread = useMemo(
+    () => threads.find((t) => t.id === activeThreadId),
+    [threads, activeThreadId],
+  )
+
   // Auto-scroll to bottom during streaming and when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -194,7 +199,7 @@ export default function ChatPage({
     }
 
     // Resolve model override: per-message takes priority, then thread default (Issue #95)
-    const activeThread = threads.find((t) => t.id === activeThreadId)
+    // Use the already-memoized activeThread to avoid a redundant linear search
     const effectiveModelOverride = messageModelOverride ?? activeThread?.defaultModel
     // Clear the per-message override after consuming it
     setMessageModelOverride(undefined)
@@ -209,9 +214,8 @@ export default function ChatPage({
       messagesToSend = [{ role: 'user', content: trimmed }]
       onAddMessage(threadId, { role: 'user', content: trimmed })
     } else {
-      const currentThread = threads.find((t) => t.id === threadId)
-      const existingMsgs = currentThread
-        ? currentThread.messages.map((m) => ({ role: m.role, content: m.content }))
+      const existingMsgs = activeThread
+        ? activeThread.messages.map((m) => ({ role: m.role, content: m.content }))
         : []
       messagesToSend = [...existingMsgs, { role: 'user', content: trimmed }]
       onAddMessage(threadId, { role: 'user', content: trimmed })
@@ -223,7 +227,7 @@ export default function ChatPage({
     activeAgentId,
     activeThreadId,
     isStreaming,
-    threads,
+    activeThread,
     messageModelOverride,
     onCreateThread,
     onSetActiveThreadId,
@@ -321,7 +325,6 @@ export default function ChatPage({
     [handleSend],
   )
 
-  const activeThread = threads.find((t) => t.id === activeThreadId)
   const threadTtsEnabled = activeThread?.ttsEnabled ?? false
   const threadDefaultModel = activeThread?.defaultModel
 
