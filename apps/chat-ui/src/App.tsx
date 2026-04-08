@@ -46,7 +46,7 @@ function ChatLayout() {
   }, [operatorAgents, personas.personas])
 
   const personaIdSet = useMemo(
-    () => new Set(personas.personas.map((p) => p.id)),
+    () => new Set(personas.personas.filter((p) => p.enabled).map((p) => p.id)),
     [personas.personas],
   )
 

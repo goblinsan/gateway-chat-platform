@@ -110,7 +110,7 @@ export default function PersonaEditor({ persona, onSave, onClose }: PersonaEdito
         </div>
 
         {/* Form */}
-        <form onSubmit={(e) => { void handleSubmit(e) }} className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+        <form id="persona-form" onSubmit={(e) => { void handleSubmit(e) }} className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
           {/* Icon + Color + Name row */}
           <div className="flex gap-3 items-start">
             {/* Icon picker */}
@@ -308,7 +308,8 @@ export default function PersonaEditor({ persona, onSave, onClose }: PersonaEdito
             Cancel
           </button>
           <button
-            onClick={(e) => { void handleSubmit(e as unknown as React.FormEvent) }}
+            type="submit"
+            form="persona-form"
             disabled={saving || !name.trim() || promptTooLong}
             className="px-5 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >

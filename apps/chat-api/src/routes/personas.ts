@@ -9,7 +9,7 @@ const DESCRIPTION_MAX = 512
 
 /** Strip systemPrompt from a persona for list responses. */
 function toListItem(persona: UserPersona): PersonaListItem {
-  const { systemPrompt: _sp, ...rest } = persona
+  const { systemPrompt: _systemPrompt, ...rest } = persona
   return rest
 }
 
