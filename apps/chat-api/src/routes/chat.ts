@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
-import type { AgentChatRequest, AgentChatResponse, AgentStreamDoneEvent, RoutingExplanation } from '@gateway/shared'
+import type { AgentConfig, AgentChatRequest, AgentChatResponse, AgentStreamDoneEvent, RoutingExplanation } from '@gateway/shared'
 import type { ProviderMessage } from '@gateway/shared'
+import type { PrismaClient } from '@prisma/client'
 import { getAgent } from '../agents/registry'
 import { getProviderRegistry } from '../config/providerRegistry'
 import { getPrismaClient } from '../services/db'
@@ -10,6 +11,37 @@ import { estimateCostUsd } from '../services/costEstimator'
 import { resolveProviderChain, estimatePromptTokens } from '../routing'
 import { getBuiltInTools, dispatchTool } from '../tools/registry'
 import { syncAgentConversationToNotes } from '../services/notesSync'
+
+/**
+ * Resolve an agent config for chat.
+ * First checks the operator agent registry; if not found, looks up a user persona
+ * belonging to the requesting user. This allows persona IDs to be used as agentIds.
+ */
+async function resolveAgent(agentId: string, userId: string, prisma: PrismaClient): Promise<AgentConfig | undefined> {
+  const operatorAgent = getAgent(agentId)
+  if (operatorAgent) return operatorAgent
+
+  const persona = await prisma.userPersona.findFirst({
+    where: { id: agentId, userId, enabled: true },
+  })
+  if (!persona) return undefined
+
+  return {
+    id: persona.id,
+    name: persona.name,
+    icon: persona.icon,
+    color: persona.color,
+    providerName: persona.providerName,
+    model: persona.model,
+    costClass: 'free',
+    systemPrompt: persona.systemPrompt ?? undefined,
+    temperature: persona.temperature ?? undefined,
+    maxTokens: persona.maxTokens ?? undefined,
+    enableReasoning: persona.enableReasoning || undefined,
+    enabled: persona.enabled,
+    source: 'database',
+  }
+}
 
 const bodySchema = {
   type: 'object',
@@ -46,7 +78,8 @@ export default async function chatRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const { agentId, messages, threadId } = req.body
 
-      const agent = getAgent(agentId)
+      const prisma = getPrismaClient()
+      const agent = await resolveAgent(agentId, req.userId, prisma)
       if (!agent) {
         return reply.status(404).send({ error: `Agent '${agentId}' not found` })
       }
@@ -120,7 +153,6 @@ export default async function chatRoutes(app: FastifyInstance) {
 
       // Persist usage data asynchronously
       if (threadId) {
-        const prisma = getPrismaClient()
         const estimatedCostUsd = result.response.usage
           ? estimateCostUsd(
               result.response.model ?? agent.model,
@@ -193,7 +225,8 @@ export default async function chatRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const { agentId, messages, threadId } = req.body
 
-      const agent = getAgent(agentId)
+      const prisma = getPrismaClient()
+      const agent = await resolveAgent(agentId, req.userId, prisma)
       if (!agent) {
         void reply.status(404).send({ error: `Agent '${agentId}' not found` })
         return
@@ -293,7 +326,6 @@ export default async function chatRoutes(app: FastifyInstance) {
 
         // Persist usage data asynchronously
         if (threadId) {
-          const prisma = getPrismaClient()
           const estimatedCostUsd = usageData
             ? estimateCostUsd(agent.model, usageData.promptTokens, usageData.completionTokens)
             : 0
