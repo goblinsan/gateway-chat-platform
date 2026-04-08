@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client'
 
 export interface PersistConversationInput {
   id: string
+  userId: string
   agentId: string
   title: string
 }
@@ -14,6 +15,7 @@ export interface PersistMessageInput {
 }
 
 export interface PersistUsageLogInput {
+  userId: string
   conversationId?: string
   agentId: string
   provider: string
@@ -32,7 +34,7 @@ export async function upsertConversation(
   await prisma.conversation.upsert({
     where: { id: input.id },
     update: { title: input.title },
-    create: { id: input.id, agentId: input.agentId, title: input.title },
+    create: { id: input.id, userId: input.userId, agentId: input.agentId, title: input.title },
   })
 }
 
