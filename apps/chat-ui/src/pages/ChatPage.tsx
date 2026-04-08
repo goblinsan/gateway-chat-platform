@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { AgentListItem } from '@gateway/shared'
 import type { ChatThread, ThreadMessage, MessageMeta } from '../types/chat'
-import type { AgentStreamDoneEvent } from '@gateway/shared'
+import type { AgentStreamDoneEvent, UsageSummaryResponse } from '@gateway/shared'
 import MessageBubble from '../components/MessageBubble'
 import ComparePanel from '../components/ComparePanel'
 import HandoffModal from '../components/HandoffModal'
@@ -58,6 +58,8 @@ export default function ChatPage({
   const [showPromptLibrary, setShowPromptLibrary] = useState(false)
   // Per-message model override: cleared after each send (Issue #95)
   const [messageModelOverride, setMessageModelOverride] = useState<string | undefined>(undefined)
+  // Quota summary for the active model — refreshed after each send (Issue #98, #99)
+  const [quotaSummary, setQuotaSummary] = useState<UsageSummaryResponse | null>(null)
   const tts = useTts(activeAgent?.ttsVoiceId)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -222,6 +224,12 @@ export default function ChatPage({
     }
 
     await doStream(activeAgentId, threadId, messagesToSend, effectiveModelOverride)
+
+    // Refresh quota summary so the warning badge stays up to date (Issue #99)
+    fetch('/api/usage/summary?hours=24')
+      .then((r) => r.ok ? r.json() as Promise<UsageSummaryResponse> : Promise.resolve(null))
+      .then((data) => { if (data) setQuotaSummary(data) })
+      .catch(() => { /* non-critical */ })
   }, [
     input,
     activeAgentId,
@@ -465,13 +473,32 @@ export default function ChatPage({
           <div className="flex-1" />
           {/* Per-message model override picker (Issue #95) */}
           {activeAgentId && activeAgent && (
-            <ModelPicker
-              value={messageModelOverride}
-              agentModel={threadDefaultModel ?? activeAgent.model}
-              onChange={setMessageModelOverride}
-              disabled={isStreaming}
-              label={messageModelOverride ? messageModelOverride : '🧠 Once'}
-            />
+            <>
+              <ModelPicker
+                value={messageModelOverride}
+                agentModel={threadDefaultModel ?? activeAgent.model}
+                onChange={setMessageModelOverride}
+                disabled={isStreaming}
+                label={messageModelOverride ? messageModelOverride : '🧠 Once'}
+              />
+              {/* Quota warning badge (Issue #99) */}
+              {(() => {
+                const effectiveModel = messageModelOverride ?? threadDefaultModel ?? activeAgent.model
+                const entry = quotaSummary?.entries.find((e) => e.model === effectiveModel)
+                if (!entry?.quota) return null
+                if (entry.quota.exceeded) return (
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-red-900/70 text-red-400 font-medium" title="Quota exceeded for this model">
+                    ⚠ Quota
+                  </span>
+                )
+                if (entry.quota.nearLimit) return (
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/70 text-yellow-400 font-medium" title="Approaching quota limit for this model">
+                    ⚠ Limit
+                  </span>
+                )
+                return null
+              })()}
+            </>
           )}
           <button
             type="button"

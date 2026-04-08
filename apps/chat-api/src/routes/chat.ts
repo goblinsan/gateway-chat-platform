@@ -8,6 +8,7 @@ import { getProviderRegistry } from '../config/providerRegistry'
 import { getPrismaClient } from '../services/db'
 import { upsertConversation, persistMessage, persistUsageLog } from '../services/persistence'
 import { estimateCostUsd } from '../services/costEstimator'
+import { checkQuota } from '../services/quotaService'
 import { resolveProviderChain, estimatePromptTokens } from '../routing'
 import { getBuiltInTools, dispatchTool } from '../tools/registry'
 import { syncAgentConversationToNotes } from '../services/notesSync'
@@ -131,6 +132,25 @@ export default async function chatRoutes(app: FastifyInstance) {
 
       // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94)
       const resolvedModel = modelOverride ?? agent.model
+
+      // Enforce per-model quota before calling the provider (Issue #98)
+      const quotaStatus = await checkQuota(prisma, req.userId, resolvedModel)
+      if (quotaStatus?.exceeded) {
+        return reply.status(429).send({
+          error: 'Quota exceeded',
+          message: `Your usage quota for model '${resolvedModel}' has been reached for the current ${quotaStatus.windowHours}-hour window.`,
+          quota: {
+            model: quotaStatus.model,
+            windowHours: quotaStatus.windowHours,
+            usedTokens: quotaStatus.usedTokens,
+            maxTokens: quotaStatus.maxTokens,
+            usedRequests: quotaStatus.usedRequests,
+            maxRequests: quotaStatus.maxRequests,
+            usedCostUsd: quotaStatus.usedCostUsd,
+            maxCostUsd: quotaStatus.maxCostUsd,
+          },
+        })
+      }
 
       const startTime = Date.now()
       const result = await registry.sendChatWithChain(decision.orderedChain, {
@@ -285,6 +305,26 @@ export default async function chatRoutes(app: FastifyInstance) {
 
       // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94)
       const resolvedModel = modelOverride ?? agent.model
+
+      // Enforce per-model quota before opening the stream (Issue #98)
+      const quotaStatus = await checkQuota(prisma, req.userId, resolvedModel)
+      if (quotaStatus?.exceeded) {
+        void reply.status(429).send({
+          error: 'Quota exceeded',
+          message: `Your usage quota for model '${resolvedModel}' has been reached for the current ${quotaStatus.windowHours}-hour window.`,
+          quota: {
+            model: quotaStatus.model,
+            windowHours: quotaStatus.windowHours,
+            usedTokens: quotaStatus.usedTokens,
+            maxTokens: quotaStatus.maxTokens,
+            usedRequests: quotaStatus.usedRequests,
+            maxRequests: quotaStatus.maxRequests,
+            usedCostUsd: quotaStatus.usedCostUsd,
+            maxCostUsd: quotaStatus.maxCostUsd,
+          },
+        })
+        return
+      }
 
       reply.hijack()
       reply.raw.writeHead(200, {

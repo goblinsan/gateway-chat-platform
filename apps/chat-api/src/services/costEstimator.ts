@@ -1,5 +1,5 @@
 // Price per 1M tokens in USD
-const PRICING: Record<string, { input: number; output: number }> = {
+export const MODEL_RATES: Record<string, { input: number; output: number }> = {
   'gpt-4o': { input: 5.0, output: 15.0 },
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
   'gpt-4-turbo': { input: 10.0, output: 30.0 },
@@ -16,7 +16,7 @@ export function estimateCostUsd(
   promptTokens: number,
   completionTokens: number,
 ): number {
-  const pricing = PRICING[model]
+  const pricing = MODEL_RATES[model]
   if (!pricing) return 0
   const inputCost = (promptTokens / 1_000_000) * pricing.input
   const outputCost = (completionTokens / 1_000_000) * pricing.output
