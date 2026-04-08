@@ -16,6 +16,7 @@ import agentRunRoutes from './routes/run'
 import ttsRoutes from './routes/tts'
 import inboxRoutes from './routes/inbox'
 import cfAccessPlugin from './plugins/cfAccess'
+import userIdentityPlugin from './plugins/userIdentity'
 import { getPrismaClient } from './services/db'
 import { scheduleRetentionCleanup } from './services/retention'
 import { initAgentRegistry } from './agents/registry'
@@ -82,6 +83,9 @@ async function bootstrap() {
   // Initialize dynamic agent registry from DB (seeds defaults on first run)
   const prisma = getPrismaClient()
   await initAgentRegistry(prisma)
+
+  // User identity resolution — sets req.userId for all routes (#85)
+  await app.register(userIdentityPlugin)
 
   // Routes
   await app.register(healthRoutes, { prefix: '/api' })

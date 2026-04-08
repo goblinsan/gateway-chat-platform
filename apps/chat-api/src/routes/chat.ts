@@ -133,6 +133,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')
             await upsertConversation(prisma, {
               id: threadId,
+              userId: req.userId,
               agentId,
               title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
             })
@@ -151,6 +152,7 @@ export default async function chatRoutes(app: FastifyInstance) {
               content: result.response.message.content,
             })
             await persistUsageLog(prisma, {
+              userId: req.userId,
               conversationId: threadId,
               agentId,
               provider: result.usedProvider,
@@ -299,10 +301,12 @@ export default async function chatRoutes(app: FastifyInstance) {
             try {
               await upsertConversation(prisma, {
                 id: threadId,
+                userId: req.userId,
                 agentId,
                 title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
               })
               await persistUsageLog(prisma, {
+                userId: req.userId,
                 conversationId: threadId,
                 agentId,
                 provider: usedProvider,

@@ -18,7 +18,7 @@ const fileStore = new Map<string, FileRecord[]>()
 // MAX_FILE_SIZE is enforced against the reported `size` field (original bytes).
 // The base64-encoded `content` field will be ~33% larger than this limit.
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB (original file size)
-// Max files stored per thread to prevent unbounded memory growth
+// Max files stored per user+thread to prevent unbounded memory growth
 const MAX_FILES_PER_THREAD = 20
 
 const uploadBodySchema = {
@@ -44,14 +44,15 @@ export default async function filesRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       const { threadId, name, mimeType, content, size } = req.body
+      const storeKey = `${req.userId}:${threadId}`
       const id = crypto.randomUUID()
       const uploadedAt = new Date().toISOString()
       const record: FileRecord = { id, name, size, mimeType, uploadedAt, threadId, content }
-      const existing = fileStore.get(threadId) ?? []
+      const existing = fileStore.get(storeKey) ?? []
       if (existing.length >= MAX_FILES_PER_THREAD) {
-        return reply.status(429).send({ error: 'File limit per thread reached' })
+        return reply.status(429).send({ error: 'Maximum files per thread exceeded' })
       }
-      fileStore.set(threadId, [...existing, record])
+      fileStore.set(storeKey, [...existing, record])
       const metadata: FileMetadata = { id, name, size, mimeType, uploadedAt, threadId }
       return reply.status(201).send(metadata)
     },
@@ -73,7 +74,8 @@ export default async function filesRoutes(app: FastifyInstance) {
       if (!threadId) {
         return reply.status(400).send({ error: 'threadId query parameter is required' })
       }
-      const records = fileStore.get(threadId) ?? []
+      const storeKey = `${req.userId}:${threadId}`
+      const records = fileStore.get(storeKey) ?? []
       const files: FileMetadata[] = records.map(({ content: _c, ...meta }) => meta)
       return reply.send({ files })
     },

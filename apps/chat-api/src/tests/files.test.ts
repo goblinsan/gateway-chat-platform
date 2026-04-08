@@ -1,6 +1,23 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import Fastify from 'fastify'
 import filesRoutes from '../routes/files'
+
+vi.mock('../config/env', () => ({
+  getEnv: () => ({
+    CF_ACCESS_TEAM_DOMAIN: undefined,
+    CF_ACCESS_AUD: undefined,
+    CHAT_DEFAULT_USER_ID: 'me',
+  }),
+}))
+
+import userIdentityPlugin from '../plugins/userIdentity'
+
+async function buildApp() {
+  const app = Fastify({ logger: false })
+  await app.register(userIdentityPlugin)
+  await app.register(filesRoutes, { prefix: '/api' })
+  return app
+}
 
 const SAMPLE_FILE = {
   threadId: 'thread-test-1',
@@ -12,8 +29,7 @@ const SAMPLE_FILE = {
 
 describe('Files API', () => {
   it('POST /api/files stores file and returns metadata without content', async () => {
-    const app = Fastify()
-    await app.register(filesRoutes, { prefix: '/api' })
+    const app = await buildApp()
     const res = await app.inject({
       method: 'POST',
       url: '/api/files',
@@ -28,8 +44,7 @@ describe('Files API', () => {
   })
 
   it('GET /api/files returns files for threadId', async () => {
-    const app = Fastify()
-    await app.register(filesRoutes, { prefix: '/api' })
+    const app = await buildApp()
 
     await app.inject({ method: 'POST', url: '/api/files', payload: SAMPLE_FILE })
 
@@ -45,8 +60,7 @@ describe('Files API', () => {
   })
 
   it('GET /api/files returns empty array for unknown threadId', async () => {
-    const app = Fastify()
-    await app.register(filesRoutes, { prefix: '/api' })
+    const app = await buildApp()
     const res = await app.inject({
       method: 'GET',
       url: '/api/files?threadId=unknown-thread-xyz',
@@ -57,8 +71,7 @@ describe('Files API', () => {
   })
 
   it('POST /api/files returns 400 when required fields missing', async () => {
-    const app = Fastify()
-    await app.register(filesRoutes, { prefix: '/api' })
+    const app = await buildApp()
     const res = await app.inject({
       method: 'POST',
       url: '/api/files',

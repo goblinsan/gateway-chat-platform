@@ -200,6 +200,7 @@ export default async function agentRunRoutes(app: FastifyInstance) {
           if (threadId) {
             await upsertConversation(prisma, {
               id: threadId,
+              userId: req.userId,
               agentId,
               title: threadTitle,
             })
@@ -217,6 +218,7 @@ export default async function agentRunRoutes(app: FastifyInstance) {
             })
           }
           await persistUsageLog(prisma, {
+            userId: req.userId,
             ...(threadId ? { conversationId: threadId } : {}),
             agentId,
             provider: result.usedProvider,
