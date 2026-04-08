@@ -12,10 +12,12 @@ import AgentTabs from './components/AgentTabs'
 import WorkflowPanel from './components/WorkflowPanel'
 import InboxPanel from './components/InboxPanel'
 import PersonasPanel from './components/PersonasPanel'
+import UsagePanel from './components/UsagePanel'
 import { personaToAgentListItem } from './utils/persona'
 import { useThreads } from './hooks/useThreads'
 import { useInbox, type ChatInboxScope } from './hooks/useInbox'
 import { usePersonas } from './hooks/usePersonas'
+import { useUsage } from './hooks/useUsage'
 
 function resolveInboxScope(): ChatInboxScope {
   try {
@@ -36,6 +38,7 @@ function ChatLayout() {
   const operatorAgents = useMemo<AgentListItem[]>(() => data?.agents ?? [], [data])
 
   const personas = usePersonas()
+  const usage = useUsage()
 
   // Merge operator agents and enabled user personas into a single list
   const agents = useMemo<AgentListItem[]>(() => {
@@ -54,6 +57,7 @@ function ChatLayout() {
   const [showWorkflows, setShowWorkflows] = useState(false)
   const [showInbox, setShowInbox] = useState(false)
   const [showPersonas, setShowPersonas] = useState(false)
+  const [showUsage, setShowUsage] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [inboxScope] = useState<ChatInboxScope>(() => resolveInboxScope())
 
@@ -154,6 +158,7 @@ function ChatLayout() {
         unreadCount={inbox.unreadCount}
         onInbox={() => setShowInbox((value) => !value)}
         onPersonas={() => { setShowPersonas((v) => !v); setSidebarOpen(false) }}
+        onUsage={() => { setShowUsage((v) => !v); setSidebarOpen(false) }}
         onClose={() => setSidebarOpen(false)}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -238,6 +243,15 @@ function ChatLayout() {
         }}
         activePersonaId={personaIdSet.has(activeAgentId) ? activeAgentId : undefined}
         onClose={() => setShowPersonas(false)}
+      />
+      <UsagePanel
+        isOpen={showUsage}
+        summary={usage.summary}
+        rates={usage.rates}
+        loading={usage.loading}
+        error={usage.error}
+        onRefresh={() => { void usage.refresh() }}
+        onClose={() => setShowUsage(false)}
       />
     </div>
   )

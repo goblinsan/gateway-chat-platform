@@ -61,6 +61,10 @@ vi.mock('../services/notesSync', () => ({
   syncAgentConversationToNotes: (...args: unknown[]) => mockSyncAgentConversationToNotes(...args),
 }))
 
+vi.mock('../services/quotaService', () => ({
+  checkQuota: vi.fn().mockResolvedValue(null),
+}))
+
 import Fastify from 'fastify'
 import chatRoutes from '../routes/chat'
 

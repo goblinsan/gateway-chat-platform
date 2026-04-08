@@ -93,6 +93,10 @@ vi.mock('../services/costEstimator', () => ({
   estimateCostUsd: () => 0,
 }))
 
+vi.mock('../services/quotaService', () => ({
+  checkQuota: vi.fn().mockResolvedValue(null),
+}))
+
 // ---------------------------------------------------------------------------
 // Imports after mocks
 // ---------------------------------------------------------------------------

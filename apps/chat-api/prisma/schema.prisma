@@ -67,6 +67,21 @@ model Agent {
   updatedAt       DateTime @updatedAt
 }
 
+model ModelQuota {
+  id          String   @id @default(uuid())
+  userId      String   @default("*")
+  model       String
+  windowHours Int      @default(24)
+  maxTokens   Int?
+  maxRequests Int?
+  maxCostUsd  Float?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, model])
+}
+
 model UserPersona {
   id              String   @id @default(uuid())
   userId          String

@@ -22,6 +22,7 @@ interface SidebarProps {
   unreadCount: number
   onInbox: () => void
   onPersonas: () => void
+  onUsage: () => void
   onClose: () => void
 }
 
@@ -55,6 +56,7 @@ const Sidebar = React.memo(function Sidebar({
   unreadCount,
   onInbox,
   onPersonas,
+  onUsage,
   onClose,
 }: SidebarProps) {
   const [providerStatus, setProviderStatus] = useState<ProviderStatusEntry[]>([])
@@ -153,6 +155,13 @@ const Sidebar = React.memo(function Sidebar({
         >
           <span className="text-base" aria-hidden="true">✨</span>
           My Personas
+        </button>
+        <button
+          onClick={onUsage}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition-colors mt-1"
+        >
+          <span className="text-base" aria-hidden="true">📊</span>
+          Usage &amp; Quotas
         </button>
       </div>
 
