@@ -45,6 +45,9 @@ vi.mock('../services/db', () => ({
     conversation: {},
     message: {},
     usageLog: {},
+    userPersona: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
   }),
 }))
 

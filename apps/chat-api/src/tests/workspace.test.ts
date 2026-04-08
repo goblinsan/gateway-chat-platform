@@ -69,7 +69,14 @@ const mockPersistMessage = vi.fn()
 const mockPersistUsageLog = vi.fn()
 
 vi.mock('../services/db', () => ({
-  getPrismaClient: () => ({ conversation: {}, message: {}, usageLog: {} }),
+  getPrismaClient: () => ({
+    conversation: {},
+    message: {},
+    usageLog: {},
+    userPersona: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+  }),
 }))
 
 vi.mock('../services/persistence', () => ({
