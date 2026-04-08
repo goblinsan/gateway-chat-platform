@@ -227,8 +227,8 @@ export default function ChatPage({
 
     // Refresh quota summary so the warning badge stays up to date (Issue #99)
     fetch('/api/usage/summary?hours=24')
-      .then((r) => r.ok ? r.json() as Promise<UsageSummaryResponse> : Promise.resolve(null))
-      .then((data) => { if (data) setQuotaSummary(data) })
+      .then((r) => r.ok ? r.json() : Promise.resolve(null))
+      .then((data: UsageSummaryResponse | null) => { if (data) setQuotaSummary(data) })
       .catch(() => { /* non-critical */ })
   }, [
     input,

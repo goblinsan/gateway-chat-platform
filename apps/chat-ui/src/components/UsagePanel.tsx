@@ -33,13 +33,6 @@ function QuotaDetail({ entry }: { entry: ModelUsageSummaryEntry }) {
   const q = entry.quota
   if (!q) return null
 
-  const pctTokens =
-    q.maxTokens != null ? Math.min(100, (q.usedTokens / q.maxTokens) * 100) : null
-  const pctRequests =
-    q.maxRequests != null ? Math.min(100, (q.usedRequests / q.maxRequests) * 100) : null
-  const pctCost =
-    q.maxCostUsd != null ? Math.min(100, (q.usedCostUsd / q.maxCostUsd) * 100) : null
-
   const statusColor = q.exceeded
     ? 'text-red-400'
     : q.nearLimit
@@ -83,13 +76,10 @@ function QuotaDetail({ entry }: { entry: ModelUsageSummaryEntry }) {
               ${q.usedCostUsd.toFixed(4)} / ${q.maxCostUsd.toFixed(4)}
             </span>
           </div>
-          {/* pctCost is guaranteed non-null when maxCostUsd is non-null */}
-          <QuotaBar used={pctCost!} max={100} />
+          <QuotaBar used={q.usedCostUsd} max={q.maxCostUsd} />
         </div>
       )}
 
-      {/* suppress unused warning */}
-      {pctTokens != null && pctRequests != null && null}
       <div className="text-xs text-gray-600">{q.windowHours}h rolling window</div>
     </div>
   )

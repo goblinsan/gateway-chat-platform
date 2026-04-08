@@ -3,6 +3,9 @@ import { getPrismaClient } from '../services/db'
 import { getUserUsageSummary } from '../services/quotaService'
 import { MODEL_RATES } from '../services/costEstimator'
 
+/** Maximum rolling window that can be requested via ?hours=N (30 days). */
+const MAX_PERIOD_HOURS = 720
+
 const summaryQuerySchema = {
   type: 'object',
   properties: {
@@ -25,7 +28,7 @@ export default async function usageRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       const { hours = '24' } = req.query as { hours?: string }
-      const periodHours = Math.min(parseInt(hours, 10) || 24, 720) // cap at 30 days
+      const periodHours = Math.min(parseInt(hours, 10) || 24, MAX_PERIOD_HOURS)
       const prisma = getPrismaClient()
       const summary = await getUserUsageSummary(prisma, req.userId, periodHours)
       return reply.send(summary)
