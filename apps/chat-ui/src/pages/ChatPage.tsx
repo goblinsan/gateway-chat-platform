@@ -8,6 +8,7 @@ import HandoffModal from '../components/HandoffModal'
 import PromptLibrary from '../components/PromptLibrary'
 import FileAttachment from '../components/FileAttachment'
 import MicButton from '../components/SpeechControls'
+import ModelPicker from '../components/ModelPicker'
 import { useTts } from '../hooks/useTts'
 import { synthesizeSpeechToBase64 } from '../api/tts'
 
@@ -24,6 +25,7 @@ interface ChatPageProps {
   onSetThreadMessages: (threadId: string, messages: ThreadMessage[]) => void
   onUpdateMessageTtsAudio: (threadId: string, messageId: string, audioBase64: string) => void
   onSetThreadTtsEnabled: (threadId: string, enabled: boolean) => void
+  onSetThreadDefaultModel: (threadId: string, defaultModel: string | undefined) => void
 }
 
 type SSEEvent =
@@ -44,6 +46,7 @@ export default function ChatPage({
   onSetThreadMessages,
   onUpdateMessageTtsAudio,
   onSetThreadTtsEnabled,
+  onSetThreadDefaultModel,
 }: ChatPageProps) {
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -53,6 +56,8 @@ export default function ChatPage({
   const [compareLoading, setCompareLoading] = useState(false)
   const [showHandoff, setShowHandoff] = useState(false)
   const [showPromptLibrary, setShowPromptLibrary] = useState(false)
+  // Per-message model override: cleared after each send (Issue #95)
+  const [messageModelOverride, setMessageModelOverride] = useState<string | undefined>(undefined)
   const tts = useTts(activeAgent?.ttsVoiceId)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -95,6 +100,7 @@ export default function ChatPage({
       agentId: string,
       threadId: string,
       messagesToSend: Array<{ role: 'user' | 'assistant'; content: string }>,
+      modelOverride?: string,
     ): Promise<void> => {
       const placeholder = onAddMessage(threadId, { role: 'assistant', content: '' })
       setStreamingMessageId(placeholder.id)
@@ -106,7 +112,12 @@ export default function ChatPage({
         const response = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentId, threadId, messages: messagesToSend }),
+          body: JSON.stringify({
+            agentId,
+            threadId,
+            messages: messagesToSend,
+            ...(modelOverride ? { modelOverride } : {}),
+          }),
         })
 
         if (!response.ok || !response.body) {
@@ -182,6 +193,12 @@ export default function ChatPage({
       textareaRef.current.style.height = 'auto'
     }
 
+    // Resolve model override: per-message takes priority, then thread default (Issue #95)
+    const activeThread = threads.find((t) => t.id === activeThreadId)
+    const effectiveModelOverride = messageModelOverride ?? activeThread?.defaultModel
+    // Clear the per-message override after consuming it
+    setMessageModelOverride(undefined)
+
     let threadId = activeThreadId
     let messagesToSend: Array<{ role: 'user' | 'assistant'; content: string }>
 
@@ -200,13 +217,14 @@ export default function ChatPage({
       onAddMessage(threadId, { role: 'user', content: trimmed })
     }
 
-    await doStream(activeAgentId, threadId, messagesToSend)
+    await doStream(activeAgentId, threadId, messagesToSend, effectiveModelOverride)
   }, [
     input,
     activeAgentId,
     activeThreadId,
     isStreaming,
     threads,
+    messageModelOverride,
     onCreateThread,
     onSetActiveThreadId,
     onAddMessage,
@@ -228,7 +246,7 @@ export default function ChatPage({
     onSetThreadMessages(activeThreadId, truncated)
 
     const messagesToSend = truncated.map((m) => ({ role: m.role, content: m.content }))
-    await doStream(activeAgentId, activeThreadId, messagesToSend)
+    await doStream(activeAgentId, activeThreadId, messagesToSend, thread.defaultModel)
   }, [activeThreadId, activeAgentId, isStreaming, threads, onSetThreadMessages, doStream])
 
   const handleEditResend = useCallback(
@@ -247,7 +265,7 @@ export default function ChatPage({
       onSetThreadMessages(activeThreadId, truncated)
 
       const messagesToSend = truncated.map((m) => ({ role: m.role, content: m.content }))
-      await doStream(activeAgentId, activeThreadId, messagesToSend)
+      await doStream(activeAgentId, activeThreadId, messagesToSend, thread.defaultModel)
     },
     [activeThreadId, activeAgentId, isStreaming, threads, onSetThreadMessages, doStream],
   )
@@ -305,11 +323,17 @@ export default function ChatPage({
 
   const activeThread = threads.find((t) => t.id === activeThreadId)
   const threadTtsEnabled = activeThread?.ttsEnabled ?? false
+  const threadDefaultModel = activeThread?.defaultModel
 
   const handleToggleThreadTts = useCallback(() => {
     if (!activeThreadId) return
     onSetThreadTtsEnabled(activeThreadId, !threadTtsEnabled)
   }, [activeThreadId, threadTtsEnabled, onSetThreadTtsEnabled])
+
+  const handleSetThreadDefaultModel = useCallback((model: string | undefined) => {
+    if (!activeThreadId) return
+    onSetThreadDefaultModel(activeThreadId, model)
+  }, [activeThreadId, onSetThreadDefaultModel])
 
   const isLastAssistantMessage = useCallback(
     (message: ThreadMessage): boolean => {
@@ -341,6 +365,16 @@ export default function ChatPage({
               )}
             </p>
           </div>
+          {/* Per-thread default model picker (Issue #95) */}
+          {activeThreadId && (
+            <ModelPicker
+              value={threadDefaultModel}
+              agentModel={activeAgent.model}
+              onChange={handleSetThreadDefaultModel}
+              disabled={isStreaming}
+              label={threadDefaultModel ?? activeAgent.model}
+            />
+          )}
           {activeThreadId && messages.length > 0 && (
             <button
               onClick={() => setShowHandoff(true)}
@@ -426,6 +460,16 @@ export default function ChatPage({
         <div className="flex items-center gap-2 mb-2">
           <FileAttachment threadId={activeThreadId} />
           <div className="flex-1" />
+          {/* Per-message model override picker (Issue #95) */}
+          {activeAgentId && activeAgent && (
+            <ModelPicker
+              value={messageModelOverride}
+              agentModel={threadDefaultModel ?? activeAgent.model}
+              onChange={setMessageModelOverride}
+              disabled={isStreaming}
+              label={messageModelOverride ? messageModelOverride : '🧠 Once'}
+            />
+          )}
           <button
             type="button"
             onClick={() => setShowPromptLibrary((v) => !v)}

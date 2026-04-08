@@ -49,6 +49,7 @@ const bodySchema = {
   properties: {
     agentId: { type: 'string', minLength: 1, maxLength: 64 },
     threadId: { type: 'string', maxLength: 64 },
+    modelOverride: { type: 'string', minLength: 1, maxLength: 256 },
     messages: {
       type: 'array',
       minItems: 1,
@@ -76,7 +77,7 @@ export default async function chatRoutes(app: FastifyInstance) {
       config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
     },
     async (req, reply) => {
-      const { agentId, messages, threadId } = req.body
+      const { agentId, messages, threadId, modelOverride } = req.body
 
       const prisma = getPrismaClient()
       const agent = await resolveAgent(agentId, req.userId, prisma)
@@ -128,9 +129,12 @@ export default async function chatRoutes(app: FastifyInstance) {
         'Routing decision',
       )
 
+      // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94)
+      const resolvedModel = modelOverride ?? agent.model
+
       const startTime = Date.now()
       const result = await registry.sendChatWithChain(decision.orderedChain, {
-        model: agent.model,
+        model: resolvedModel,
         messages: providerMessages,
         temperature: agent.temperature,
         maxTokens: agent.maxTokens,
@@ -153,9 +157,10 @@ export default async function chatRoutes(app: FastifyInstance) {
 
       // Persist usage data asynchronously
       if (threadId) {
+        const effectiveModel = result.response.model ?? resolvedModel
         const estimatedCostUsd = result.response.usage
           ? estimateCostUsd(
-              result.response.model ?? agent.model,
+              effectiveModel,
               result.response.usage.promptTokens,
               result.response.usage.completionTokens,
             )
@@ -168,6 +173,7 @@ export default async function chatRoutes(app: FastifyInstance) {
               userId: req.userId,
               agentId,
               title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
+              ...(modelOverride ? { defaultModel: modelOverride } : {}),
             })
             if (latestUserMessage) {
               await persistMessage(prisma, {
@@ -182,13 +188,15 @@ export default async function chatRoutes(app: FastifyInstance) {
               conversationId: threadId,
               role: 'assistant',
               content: result.response.message.content,
+              model: effectiveModel,
+              provider: result.usedProvider,
             })
             await persistUsageLog(prisma, {
               userId: req.userId,
               conversationId: threadId,
               agentId,
               provider: result.usedProvider,
-              model: result.response.model ?? agent.model,
+              model: effectiveModel,
               promptTokens: result.response.usage?.promptTokens ?? 0,
               completionTokens: result.response.usage?.completionTokens ?? 0,
               totalTokens: result.response.usage?.totalTokens ?? 0,
@@ -223,7 +231,7 @@ export default async function chatRoutes(app: FastifyInstance) {
       config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
     },
     async (req, reply) => {
-      const { agentId, messages, threadId } = req.body
+      const { agentId, messages, threadId, modelOverride } = req.body
 
       const prisma = getPrismaClient()
       const agent = await resolveAgent(agentId, req.userId, prisma)
@@ -275,6 +283,9 @@ export default async function chatRoutes(app: FastifyInstance) {
         'Routing decision',
       )
 
+      // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94)
+      const resolvedModel = modelOverride ?? agent.model
+
       reply.hijack()
       reply.raw.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -295,7 +306,7 @@ export default async function chatRoutes(app: FastifyInstance) {
         const usedProvider = await registry.streamChatWithChain(
           decision.orderedChain,
           {
-            model: agent.model,
+            model: resolvedModel,
             messages: providerMessages,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
@@ -316,7 +327,7 @@ export default async function chatRoutes(app: FastifyInstance) {
         const donePayload: AgentStreamDoneEvent = {
           type: 'done',
           agentId,
-          model: agent.model,
+          model: resolvedModel,
           usedProvider,
           latencyMs,
           ...(usageData ? { usage: usageData } : {}),
@@ -327,7 +338,7 @@ export default async function chatRoutes(app: FastifyInstance) {
         // Persist usage data asynchronously
         if (threadId) {
           const estimatedCostUsd = usageData
-            ? estimateCostUsd(agent.model, usageData.promptTokens, usageData.completionTokens)
+            ? estimateCostUsd(resolvedModel, usageData.promptTokens, usageData.completionTokens)
             : 0
           void (async () => {
             try {
@@ -336,13 +347,14 @@ export default async function chatRoutes(app: FastifyInstance) {
                 userId: req.userId,
                 agentId,
                 title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
+                ...(modelOverride ? { defaultModel: modelOverride } : {}),
               })
               await persistUsageLog(prisma, {
                 userId: req.userId,
                 conversationId: threadId,
                 agentId,
                 provider: usedProvider,
-                model: agent.model,
+                model: resolvedModel,
                 promptTokens: usageData?.promptTokens ?? 0,
                 completionTokens: usageData?.completionTokens ?? 0,
                 totalTokens: usageData?.totalTokens ?? 0,

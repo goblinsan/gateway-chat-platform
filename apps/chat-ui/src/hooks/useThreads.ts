@@ -161,6 +161,15 @@ export function useThreads(scopeKey: string) {
     [setThreads],
   )
 
+  const setThreadDefaultModel = useCallback(
+    (threadId: string, defaultModel: string | undefined): void => {
+      setThreads((prev) =>
+        prev.map((t) => (t.id === threadId ? { ...t, defaultModel } : t)),
+      )
+    },
+    [setThreads],
+  )
+
   const getThread = useCallback(
     (threadId: string): ChatThread | undefined => {
       return threads.find((t) => t.id === threadId)
@@ -178,6 +187,7 @@ export function useThreads(scopeKey: string) {
     updateLastAssistantMessage,
     updateMessageTtsAudio,
     setThreadTtsEnabled,
+    setThreadDefaultModel,
     setThreadMessages,
     deleteThread,
     getThread,

@@ -40,6 +40,7 @@ export interface AgentsListResponse {
 export interface AgentChatRequest {
   agentId: string
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  modelOverride?: string
 }
 
 /** Response body for POST /api/chat */

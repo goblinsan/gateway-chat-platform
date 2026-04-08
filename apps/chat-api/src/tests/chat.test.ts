@@ -207,6 +207,83 @@ describe('POST /api/chat', () => {
     expect(chain).not.toContain('openai')
   })
 
+  it('uses modelOverride instead of agent model when provided', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'local-analyst',
+        messages: [{ role: 'user', content: 'Hello' }],
+        modelOverride: 'gpt-4o',
+      },
+    })
+
+    const call = MOCK_REGISTRY.sendChatWithChain.mock.calls[0]
+    const [, request] = call as [string[], { model: string }]
+    expect(request.model).toBe('gpt-4o')
+  })
+
+  it('uses the agent model when modelOverride is not provided', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'local-analyst',
+        messages: [{ role: 'user', content: 'Hello' }],
+      },
+    })
+
+    const call = MOCK_REGISTRY.sendChatWithChain.mock.calls[0]
+    const [, request] = call as [string[], { model: string }]
+    // local-analyst uses 'local-model'
+    expect(request.model).toBe('local-model')
+  })
+
+  it('persists model and provider on the assistant message when threadId is provided', async () => {
+    MOCK_REGISTRY.sendChatWithChain.mockResolvedValueOnce({
+      response: {
+        id: 'resp-2',
+        model: 'overridden-model',
+        message: { role: 'assistant', content: 'Response!' },
+        finishReason: 'stop',
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      },
+      usedProvider: 'lm-studio-a',
+    })
+
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'local-analyst',
+        threadId: 'test-thread-persist',
+        messages: [{ role: 'user', content: 'Test model persistence' }],
+        modelOverride: 'overridden-model',
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    // Allow async persistence to flush
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const assistantCall = mockPersistMessage.mock.calls.find(
+      (c: unknown[]) => (c[1] as { role: string }).role === 'assistant',
+    )
+    expect(assistantCall).toBeDefined()
+    const persistedMsg = assistantCall![1] as { model: string; provider: string }
+    expect(persistedMsg.model).toBe('overridden-model')
+    expect(persistedMsg.provider).toBe('lm-studio-a')
+  })
+
   it('syncs thread conversations into notes when the agent enables notes sync', async () => {
     const app = Fastify()
     await app.register(chatRoutes, { prefix: '/api' })
