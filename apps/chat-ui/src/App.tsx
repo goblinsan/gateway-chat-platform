@@ -11,8 +11,11 @@ import Sidebar from './components/Sidebar'
 import AgentTabs from './components/AgentTabs'
 import WorkflowPanel from './components/WorkflowPanel'
 import InboxPanel from './components/InboxPanel'
+import PersonasPanel from './components/PersonasPanel'
+import { personaToAgentListItem } from './utils/persona'
 import { useThreads } from './hooks/useThreads'
 import { useInbox, type ChatInboxScope } from './hooks/useInbox'
+import { usePersonas } from './hooks/usePersonas'
 
 function resolveInboxScope(): ChatInboxScope {
   try {
@@ -30,11 +33,27 @@ function ChatLayout() {
     queryKey: ['agents'],
     queryFn: () => axios.get<AgentsListResponse>('/api/agents').then((r) => r.data),
   })
-  const agents = useMemo<AgentListItem[]>(() => data?.agents ?? [], [data])
+  const operatorAgents = useMemo<AgentListItem[]>(() => data?.agents ?? [], [data])
+
+  const personas = usePersonas()
+
+  // Merge operator agents and enabled user personas into a single list
+  const agents = useMemo<AgentListItem[]>(() => {
+    const personaItems = personas.personas
+      .filter((p) => p.enabled)
+      .map(personaToAgentListItem)
+    return [...operatorAgents, ...personaItems]
+  }, [operatorAgents, personas.personas])
+
+  const personaIdSet = useMemo(
+    () => new Set(personas.personas.map((p) => p.id)),
+    [personas.personas],
+  )
 
   const [activeAgentId, setActiveAgentId] = useState<string>('')
   const [showWorkflows, setShowWorkflows] = useState(false)
   const [showInbox, setShowInbox] = useState(false)
+  const [showPersonas, setShowPersonas] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [inboxScope] = useState<ChatInboxScope>(() => resolveInboxScope())
 
@@ -133,6 +152,7 @@ function ChatLayout() {
         onWorkflows={() => setShowWorkflows((v) => !v)}
         unreadCount={inbox.unreadCount}
         onInbox={() => setShowInbox((value) => !value)}
+        onPersonas={() => { setShowPersonas((v) => !v); setSidebarOpen(false) }}
         onClose={() => setSidebarOpen(false)}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -166,6 +186,8 @@ function ChatLayout() {
             agents={agents}
             activeAgentId={activeAgentId}
             onSelect={handleSelectAgent}
+            personaIds={personaIdSet}
+            onOpenPersonas={() => setShowPersonas((v) => !v)}
           />
         )}
         <ChatPage
@@ -196,6 +218,24 @@ function ChatLayout() {
         onRefresh={() => { void inbox.refresh() }}
         onOpenItem={(item) => { void handleOpenInboxItem(item) }}
         onClose={() => setShowInbox(false)}
+      />
+      <PersonasPanel
+        isOpen={showPersonas}
+        personas={personas.personas}
+        loading={personas.loading}
+        error={personas.error}
+        onRefresh={() => { void personas.refresh() }}
+        onCreate={(data) => personas.create(data)}
+        onUpdate={(id, data) => personas.update(id, data)}
+        onDelete={(id) => personas.remove(id)}
+        onDuplicate={(id) => personas.duplicate(id)}
+        onGetFull={(id) => personas.getFull(id)}
+        onSelectPersona={(persona) => {
+          handleSelectAgent(persona.id)
+          setShowPersonas(false)
+        }}
+        activePersonaId={personaIdSet.has(activeAgentId) ? activeAgentId : undefined}
+        onClose={() => setShowPersonas(false)}
       />
     </div>
   )
