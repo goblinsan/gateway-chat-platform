@@ -5,6 +5,7 @@ export interface ChatThread {
   createdAt: number
   messages: ThreadMessage[]
   ttsEnabled?: boolean
+  defaultModel?: string
 }
 
 export interface ThreadMessage {

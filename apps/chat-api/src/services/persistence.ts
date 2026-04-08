@@ -5,6 +5,7 @@ export interface PersistConversationInput {
   userId: string
   agentId: string
   title: string
+  defaultModel?: string
 }
 
 export interface PersistMessageInput {
@@ -12,6 +13,8 @@ export interface PersistMessageInput {
   conversationId: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  model?: string
+  provider?: string
 }
 
 export interface PersistUsageLogInput {
@@ -33,8 +36,17 @@ export async function upsertConversation(
 ): Promise<void> {
   await prisma.conversation.upsert({
     where: { id: input.id },
-    update: { title: input.title },
-    create: { id: input.id, userId: input.userId, agentId: input.agentId, title: input.title },
+    update: {
+      title: input.title,
+      ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel } : {}),
+    },
+    create: {
+      id: input.id,
+      userId: input.userId,
+      agentId: input.agentId,
+      title: input.title,
+      ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel } : {}),
+    },
   })
 }
 
@@ -50,6 +62,8 @@ export async function persistMessage(
       conversationId: input.conversationId,
       role: input.role,
       content: input.content,
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.provider !== undefined ? { provider: input.provider } : {}),
     },
   })
 }
