@@ -32,6 +32,11 @@ export function useThreads(scopeKey: string) {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
 
   useEffect(() => {
+    setThreadsState(loadThreads(storageKey))
+    setActiveThreadId(null)
+  }, [storageKey])
+
+  useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(threads))
     } catch {

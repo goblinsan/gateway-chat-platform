@@ -41,6 +41,7 @@ export default function PersonaEditor({ persona, onSave, onClose }: PersonaEdito
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadingPrompt, setLoadingPrompt] = useState(false)
+  const [iconPickerOpen, setIconPickerOpen] = useState(false)
 
   const isEditMode = persona != null
 
@@ -90,7 +91,10 @@ export default function PersonaEditor({ persona, onSave, onClose }: PersonaEdito
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose()
+        setIconPickerOpen(false)
+      }}
     >
       <div className="w-full max-w-lg bg-gray-900 rounded-xl border border-gray-700 shadow-2xl flex flex-col max-h-[90vh]">
         {/* Header */}
@@ -121,21 +125,27 @@ export default function PersonaEditor({ persona, onSave, onClose }: PersonaEdito
                   className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl cursor-pointer border-2 transition-colors"
                   style={{ backgroundColor: color + '22', borderColor: color }}
                   title="Click to change icon"
+                  onClick={() => setIconPickerOpen((value) => !value)}
                 >
                   {icon}
                 </div>
-                <div className="absolute top-14 left-0 z-10 bg-gray-800 border border-gray-700 rounded-lg p-2 grid grid-cols-4 gap-1 shadow-xl">
-                  {DEFAULT_ICONS.map((ic) => (
-                    <button
-                      key={ic}
-                      type="button"
-                      onClick={() => setIcon(ic)}
-                      className={`w-8 h-8 rounded text-lg flex items-center justify-center hover:bg-gray-700 transition-colors ${icon === ic ? 'bg-gray-700 ring-1 ring-indigo-500' : ''}`}
-                    >
-                      {ic}
-                    </button>
-                  ))}
-                </div>
+                {iconPickerOpen && (
+                  <div className="absolute top-14 left-0 z-10 bg-gray-800 border border-gray-700 rounded-lg p-2 grid grid-cols-4 gap-1 shadow-xl">
+                    {DEFAULT_ICONS.map((ic) => (
+                      <button
+                        key={ic}
+                        type="button"
+                        onClick={() => {
+                          setIcon(ic)
+                          setIconPickerOpen(false)
+                        }}
+                        className={`w-8 h-8 rounded text-lg flex items-center justify-center hover:bg-gray-700 transition-colors ${icon === ic ? 'bg-gray-700 ring-1 ring-indigo-500' : ''}`}
+                      >
+                        {ic}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

@@ -7,7 +7,7 @@ interface UsagePanelProps {
   rates: ModelRatesResponse | null
   loading: boolean
   error: string | null
-  onRefresh: () => void
+  onRefresh: (hours?: number) => void
   onClose: () => void
 }
 
@@ -98,13 +98,13 @@ export default function UsagePanel({
   const [activeTab, setActiveTab] = useState<'usage' | 'rates'>('usage')
 
   useEffect(() => {
-    if (isOpen) onRefresh()
+    if (isOpen) onRefresh(window)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
   const handleWindowChange = (h: Window) => {
     setWindow(h)
-    onRefresh()
+    onRefresh(h)
   }
 
   if (!isOpen) return null
@@ -125,7 +125,7 @@ export default function UsagePanel({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={onRefresh}
+            onClick={() => onRefresh(window)}
             className="px-3 py-1.5 text-xs border border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white transition-colors"
           >
             Refresh

@@ -44,6 +44,23 @@ async function resolveAgent(agentId: string, userId: string, prisma: PrismaClien
   }
 }
 
+async function isKnownModelOverride(
+  registry: ReturnType<typeof getProviderRegistry>,
+  modelOverride: string,
+): Promise<boolean> {
+  const results = await Promise.allSettled(
+    registry.getAll().map(async (adapter) => {
+      if (typeof adapter.listModels !== 'function') {
+        return false
+      }
+      const models = await adapter.listModels()
+      return models.some((model) => model.id === modelOverride || model.name === modelOverride)
+    }),
+  )
+
+  return results.some((result) => result.status === 'fulfilled' && result.value)
+}
+
 const bodySchema = {
   type: 'object',
   required: ['agentId', 'messages'],
@@ -131,6 +148,11 @@ export default async function chatRoutes(app: FastifyInstance) {
       )
 
       // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94)
+      if (modelOverride && !(await isKnownModelOverride(registry, modelOverride))) {
+        return reply.status(400).send({
+          error: `Unknown model override '${modelOverride}'`,
+        })
+      }
       const resolvedModel = modelOverride ?? agent.model
 
       // Enforce per-model quota before calling the provider (Issue #98)
@@ -304,6 +326,12 @@ export default async function chatRoutes(app: FastifyInstance) {
       )
 
       // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94)
+      if (modelOverride && !(await isKnownModelOverride(registry, modelOverride))) {
+        void reply.status(400).send({
+          error: `Unknown model override '${modelOverride}'`,
+        })
+        return
+      }
       const resolvedModel = modelOverride ?? agent.model
 
       // Enforce per-model quota before opening the stream (Issue #98)

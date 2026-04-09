@@ -42,6 +42,22 @@ Important expectations:
 - Bulk sync from the control-plane is expected to reconcile the full configured agent set.
 - Agent schema changes must be coordinated with the control-plane admin UI and config validation.
 
+## Identity and user workspace rules
+
+Treat authenticated user identity as server-owned state.
+
+- Do not key chat history, uploads, inbox state, quota state, or persona ownership off browser-editable user IDs.
+- Prefer a server-resolved identity endpoint such as `GET /api/session/me` for UI scoping.
+- When Cloudflare Access mode is enabled, require the Cloudflare identity header path and do not silently fall back to `X-User-Id`.
+- Do not let optional browser state like `localStorage` redefine who the current user is.
+- User-scoped APIs must enforce ownership on the server even if the UI already filters correctly.
+
+## Model override and quota rules
+
+- Per-message model overrides must be validated against actual provider model inventory before execution.
+- Quota and usage UI controls must pass their selected time window or filter through the full request chain; do not let the UI label drift from the backend query.
+- If a feature claims “per-user” or “per-model” behavior, add tests for both the happy path and the boundary condition.
+
 ## Endpoints the control-plane depends on
 
 Keep these stable unless `gateway-control-plane` is updated in lockstep:

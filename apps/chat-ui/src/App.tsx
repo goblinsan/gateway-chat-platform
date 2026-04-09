@@ -22,7 +22,7 @@ import { useUsage } from './hooks/useUsage'
 function resolveInboxScope(): ChatInboxScope {
   try {
     return {
-      userId: localStorage.getItem('gateway-chat-user-id')?.trim() || 'me',
+      userId: 'me',
       channelId: localStorage.getItem('gateway-chat-channel-id')?.trim() || 'coach',
     }
   } catch {
@@ -59,7 +59,36 @@ function ChatLayout() {
   const [showPersonas, setShowPersonas] = useState(false)
   const [showUsage, setShowUsage] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [inboxScope] = useState<ChatInboxScope>(() => resolveInboxScope())
+  const [sessionUserId, setSessionUserId] = useState<string | null>(null)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [inboxScope, setInboxScope] = useState<ChatInboxScope>(() => resolveInboxScope())
+
+  useEffect(() => {
+    let cancelled = false
+
+    void fetch('/api/session/me')
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to resolve session (${response.status})`)
+        }
+        return response.json() as Promise<{ userId: string }>
+      })
+      .then((payload) => {
+        if (cancelled) return
+        setSessionUserId(payload.userId)
+        setSessionError(null)
+        setInboxScope((prev) => ({ ...prev, userId: payload.userId }))
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setSessionUserId('me')
+        setSessionError(err instanceof Error ? err.message : 'Failed to resolve session')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const {
     threads,
@@ -75,7 +104,7 @@ function ChatLayout() {
     setThreadMessages,
     deleteThread,
     getThread,
-  } = useThreads(inboxScope.userId)
+  } = useThreads(sessionUserId ?? 'me')
   const inbox = useInbox(inboxScope)
 
   // Select first agent once loaded
@@ -86,6 +115,14 @@ function ChatLayout() {
   }, [agents, activeAgentId])
 
   const activeAgent = agents.find((a) => a.id === activeAgentId)
+
+  if (sessionUserId === null && sessionError === null) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-950 text-sm text-gray-400">
+        Resolving session…
+      </div>
+    )
+  }
 
   // When switching agent, auto-select most recent thread for that agent (or none)
   const handleSelectAgent = (agentId: string) => {
@@ -250,7 +287,7 @@ function ChatLayout() {
         rates={usage.rates}
         loading={usage.loading}
         error={usage.error}
-        onRefresh={() => { void usage.refresh() }}
+        onRefresh={(hours) => { void usage.refresh(hours) }}
         onClose={() => setShowUsage(false)}
       />
     </div>

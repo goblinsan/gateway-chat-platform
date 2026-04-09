@@ -25,9 +25,9 @@ const MOCK_REGISTRY = {
     usedProvider: 'lm-studio-a',
   }),
   getAll: vi.fn().mockReturnValue([
-    { name: 'lm-studio-a' },
-    { name: 'lm-studio-b' },
-    { name: 'openai' },
+    { name: 'lm-studio-a', listModels: vi.fn().mockResolvedValue(['local-model', 'overridden-model']) },
+    { name: 'lm-studio-b', listModels: vi.fn().mockResolvedValue(['builder-model']) },
+    { name: 'openai', listModels: vi.fn().mockResolvedValue(['gpt-4o', 'gpt-4o-mini']) },
   ]),
 }
 
@@ -80,9 +80,9 @@ beforeEach(() => {
     usedProvider: 'lm-studio-a',
   })
   MOCK_REGISTRY.getAll.mockReturnValue([
-    { name: 'lm-studio-a' },
-    { name: 'lm-studio-b' },
-    { name: 'openai' },
+    { name: 'lm-studio-a', listModels: vi.fn().mockResolvedValue(['local-model', 'overridden-model']) },
+    { name: 'lm-studio-b', listModels: vi.fn().mockResolvedValue(['builder-model']) },
+    { name: 'openai', listModels: vi.fn().mockResolvedValue(['gpt-4o', 'gpt-4o-mini']) },
   ])
 })
 
@@ -247,6 +247,24 @@ describe('POST /api/chat', () => {
     const [, request] = call as [string[], { model: string }]
     // local-analyst uses 'local-model'
     expect(request.model).toBe('local-model')
+  })
+
+  it('rejects an unknown modelOverride', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'local-analyst',
+        messages: [{ role: 'user', content: 'Hello' }],
+        modelOverride: 'not-a-real-model',
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    expect(JSON.parse(res.payload).error).toContain('Unknown model override')
   })
 
   it('persists model and provider on the assistant message when threadId is provided', async () => {
