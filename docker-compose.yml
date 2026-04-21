@@ -5,7 +5,7 @@ services:
       dockerfile: apps/chat-api/Dockerfile
     restart: unless-stopped
     env_file:
-      - ${APP_ENV_FILE:-apps/chat-api/.env}
+      - ${CHAT_API_ENV_FILE:-apps/chat-api/.env}
     environment:
       NODE_ENV: production
       PORT: "3000"
