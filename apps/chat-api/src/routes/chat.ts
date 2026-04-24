@@ -12,6 +12,7 @@ import { checkQuota } from '../services/quotaService'
 import { resolveProviderChain, estimatePromptTokens } from '../routing'
 import { getBuiltInTools, dispatchTool } from '../tools/registry'
 import { syncAgentConversationToNotes } from '../services/notesSync'
+import { sendToAgentService } from '../services/agentServiceClient'
 
 /**
  * Resolve an agent config for chat.
@@ -175,36 +176,62 @@ export default async function chatRoutes(app: FastifyInstance) {
       }
 
       const startTime = Date.now()
-      const result = await registry.sendChatWithChain(decision.orderedChain, {
-        model: resolvedModel,
-        messages: providerMessages,
-        temperature: agent.temperature,
-        maxTokens: agent.maxTokens,
-        modelParams: agent.endpointConfig?.modelParams,
-      })
+
+      // Route based on the agent's execution mode (Issue #106, #107, #108).
+      // Agents with executionMode='orchestrated' are forwarded to the internal
+      // agent-service. All others use the direct provider-registry path.
+      let usedProvider: string
+      let responseMessage: { role: 'assistant'; content: string }
+      let responseModel: string | undefined
+      let responseUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
+
+      if (agent.executionMode === 'orchestrated') {
+        const agentServiceResult = await sendToAgentService({
+          agentId,
+          model: resolvedModel,
+          messages: providerMessages,
+          temperature: agent.temperature,
+          maxTokens: agent.maxTokens,
+          modelParams: agent.endpointConfig?.modelParams,
+        })
+        usedProvider = agentServiceResult.usedProvider
+        responseMessage = agentServiceResult.message
+        responseModel = agentServiceResult.model
+        responseUsage = agentServiceResult.usage
+      } else {
+        const result = await registry.sendChatWithChain(decision.orderedChain, {
+          model: resolvedModel,
+          messages: providerMessages,
+          temperature: agent.temperature,
+          maxTokens: agent.maxTokens,
+          modelParams: agent.endpointConfig?.modelParams,
+        })
+        usedProvider = result.usedProvider
+        responseMessage = { role: 'assistant', content: result.response.message.content }
+        responseModel = result.response.model
+        responseUsage = result.response.usage
+      }
+
       const latencyMs = Date.now() - startTime
 
       const response: AgentChatResponse = {
         agentId,
-        usedProvider: result.usedProvider,
-        model: result.response.model,
-        message: {
-          role: 'assistant',
-          content: result.response.message.content,
-        },
+        usedProvider,
+        model: responseModel,
+        message: responseMessage,
         latencyMs,
-        ...(result.response.usage ? { usage: result.response.usage } : {}),
+        ...(responseUsage ? { usage: responseUsage } : {}),
         routingExplanation,
       }
 
       // Persist usage data asynchronously
       if (threadId) {
-        const effectiveModel = result.response.model ?? resolvedModel
-        const estimatedCostUsd = result.response.usage
+        const effectiveModel = responseModel ?? resolvedModel
+        const estimatedCostUsd = responseUsage
           ? estimateCostUsd(
               effectiveModel,
-              result.response.usage.promptTokens,
-              result.response.usage.completionTokens,
+              responseUsage.promptTokens,
+              responseUsage.completionTokens,
             )
           : 0
         void (async () => {
@@ -229,19 +256,19 @@ export default async function chatRoutes(app: FastifyInstance) {
               id: randomUUID(),
               conversationId: threadId,
               role: 'assistant',
-              content: result.response.message.content,
+              content: responseMessage.content,
               model: effectiveModel,
-              provider: result.usedProvider,
+              provider: usedProvider,
             })
             await persistUsageLog(prisma, {
               userId: req.userId,
               conversationId: threadId,
               agentId,
-              provider: result.usedProvider,
+              provider: usedProvider,
               model: effectiveModel,
-              promptTokens: result.response.usage?.promptTokens ?? 0,
-              completionTokens: result.response.usage?.completionTokens ?? 0,
-              totalTokens: result.response.usage?.totalTokens ?? 0,
+              promptTokens: responseUsage?.promptTokens ?? 0,
+              completionTokens: responseUsage?.completionTokens ?? 0,
+              totalTokens: responseUsage?.totalTokens ?? 0,
               estimatedCostUsd,
               latencyMs,
             })
@@ -250,7 +277,7 @@ export default async function chatRoutes(app: FastifyInstance) {
                 threadId,
                 source: 'chat',
                 userMessage: latestUserMessage.content,
-                assistantMessage: result.response.message.content,
+                assistantMessage: responseMessage.content,
               })
             }
           } catch (err) {
@@ -371,25 +398,47 @@ export default async function chatRoutes(app: FastifyInstance) {
       }
 
       try {
-        const usedProvider = await registry.streamChatWithChain(
-          decision.orderedChain,
-          {
+        // Route based on execution mode (Issue #106, #107, #108).
+        // For orchestrated agents, call agent-service and emit the complete response as SSE events.
+        // For direct_provider agents, use the existing streaming provider path.
+        let usedProvider: string
+
+        if (agent.executionMode === 'orchestrated') {
+          const agentServiceResult = await sendToAgentService({
+            agentId,
             model: resolvedModel,
             messages: providerMessages,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
             modelParams: agent.endpointConfig?.modelParams,
-          },
-          (event) => {
-            if (event.type === 'token' && event.token !== undefined) {
-              writeEvent({ type: 'token', token: event.token })
-            } else if (event.type === 'done' && event.usage) {
-              usageData = event.usage
-            } else if (event.type === 'error') {
-              writeEvent({ type: 'error', error: event.error ?? 'Unknown error' })
-            }
-          },
-        )
+          })
+          usedProvider = agentServiceResult.usedProvider
+          if (agentServiceResult.usage) {
+            usageData = agentServiceResult.usage
+          }
+          // Emit the full response content as a single token event
+          writeEvent({ type: 'token', token: agentServiceResult.message.content })
+        } else {
+          usedProvider = await registry.streamChatWithChain(
+            decision.orderedChain,
+            {
+              model: resolvedModel,
+              messages: providerMessages,
+              temperature: agent.temperature,
+              maxTokens: agent.maxTokens,
+              modelParams: agent.endpointConfig?.modelParams,
+            },
+            (event) => {
+              if (event.type === 'token' && event.token !== undefined) {
+                writeEvent({ type: 'token', token: event.token })
+              } else if (event.type === 'done' && event.usage) {
+                usageData = event.usage
+              } else if (event.type === 'error') {
+                writeEvent({ type: 'error', error: event.error ?? 'Unknown error' })
+              }
+            },
+          )
+        }
 
         const latencyMs = Date.now() - startTime
         const donePayload: AgentStreamDoneEvent = {

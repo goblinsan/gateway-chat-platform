@@ -1,5 +1,5 @@
 import type { PrismaClient, Agent as PrismaAgent } from '@prisma/client'
-import type { AgentConfig, CostClass, RoutingPolicy, ModelEndpointConfig, ContextSource } from '@gateway/shared'
+import type { AgentConfig, CostClass, ExecutionMode, RoutingPolicy, ModelEndpointConfig, ContextSource } from '@gateway/shared'
 
 // --- Prisma <-> AgentConfig conversion ---
 
@@ -29,6 +29,7 @@ function dbRowToConfig(row: PrismaAgent): AgentConfig {
     routingPolicy: parseJsonField<RoutingPolicy>(row.routingPolicy),
     endpointConfig: parseJsonField<ModelEndpointConfig>(row.endpointConfig),
     contextSources: parseJsonField<ContextSource[]>(row.contextSources),
+    executionMode: (row.executionMode as ExecutionMode) || undefined,
     enabled: row.enabled,
     source: 'database',
   }
@@ -51,6 +52,7 @@ function configToDbData(config: AgentConfig) {
     routingPolicy: config.routingPolicy ? JSON.stringify(config.routingPolicy) : null,
     endpointConfig: config.endpointConfig ? JSON.stringify(config.endpointConfig) : null,
     contextSources: config.contextSources ? JSON.stringify(config.contextSources) : null,
+    executionMode: config.executionMode ?? 'direct_provider',
     enabled: config.enabled ?? true,
   }
 }
