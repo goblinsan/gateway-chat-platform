@@ -52,6 +52,12 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
   CHAT_DEFAULT_USER_ID: z.string().default('me'),
   CHAT_DEFAULT_CHANNEL_ID: z.string().default('coach'),
+
+  // Internal agent-service (orchestration)
+  AGENT_SERVICE_URL: z.string().url().optional(),
+  AGENT_SERVICE_API_KEY: z.string().optional(),
+  AGENT_SERVICE_TIMEOUT_MS: z.coerce.number().default(30000),
+  AGENT_SERVICE_RETRY_COUNT: z.coerce.number().default(2),
 })
 
 export type Env = z.infer<typeof envSchema>

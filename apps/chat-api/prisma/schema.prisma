@@ -62,6 +62,7 @@ model Agent {
   routingPolicy   String?  // JSON string
   endpointConfig  String?  // JSON string
   contextSources  String?  // JSON string
+  executionMode   String   @default("direct_provider")
   enabled         Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

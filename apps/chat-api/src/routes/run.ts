@@ -13,6 +13,7 @@ import { buildAutomationMessages } from '../services/automationContext'
 import { synthesize } from '../services/ttsClient'
 import { syncAgentConversationToNotes } from '../services/notesSync'
 import { publishInboxMessage } from '../services/inbox'
+import { sendToAgentService } from '../services/agentServiceClient'
 
 const runBodySchema = {
   type: 'object',
@@ -96,15 +97,39 @@ export default async function agentRunRoutes(app: FastifyInstance) {
 
       const startTime = Date.now()
 
-      let result
+      // Route based on the agent's execution mode (Issue #106, #107, #108).
+      let runUsedProvider: string
+      let runModel: string
+      let runContent: string
+      let runUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
+
       try {
-        result = await registry.sendChatWithChain(decision.orderedChain, {
-          model: agent.model,
-          messages: providerMessages,
-          temperature: agent.temperature,
-          maxTokens: agent.maxTokens,
-          modelParams: agent.endpointConfig?.modelParams,
-        })
+        if (agent.executionMode === 'orchestrated') {
+          const agentServiceResult = await sendToAgentService({
+            agentId,
+            model: agent.model,
+            messages: providerMessages,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            modelParams: agent.endpointConfig?.modelParams,
+          })
+          runUsedProvider = agentServiceResult.usedProvider
+          runModel = agentServiceResult.model
+          runContent = agentServiceResult.message.content
+          runUsage = agentServiceResult.usage
+        } else {
+          const result = await registry.sendChatWithChain(decision.orderedChain, {
+            model: agent.model,
+            messages: providerMessages,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            modelParams: agent.endpointConfig?.modelParams,
+          })
+          runUsedProvider = result.usedProvider
+          runModel = result.response.model ?? agent.model
+          runContent = result.response.message.content
+          runUsage = result.response.usage
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Agent execution failed'
         req.log.error({ err, agentId }, 'Automation run failed')
@@ -115,11 +140,11 @@ export default async function agentRunRoutes(app: FastifyInstance) {
 
       const response: AgentRunResponse = {
         agentId,
-        usedProvider: result.usedProvider,
-        model: result.response.model ?? agent.model,
-        content: result.response.message.content,
+        usedProvider: runUsedProvider,
+        model: runModel,
+        content: runContent,
         latencyMs,
-        ...(result.response.usage ? { usage: result.response.usage } : {}),
+        ...(runUsage ? { usage: runUsage } : {}),
       }
       const metadata = context?.metadata && typeof context.metadata === 'object'
         ? context.metadata as Record<string, unknown>
@@ -188,11 +213,11 @@ export default async function agentRunRoutes(app: FastifyInstance) {
       const threadTitle = typeof metadata?.threadTitle === 'string' && metadata.threadTitle.trim()
         ? metadata.threadTitle.trim()
         : prompt.slice(0, 60) || 'Automation Conversation'
-      const estimatedCostUsd = result.response.usage
+      const estimatedCostUsd = runUsage
         ? estimateCostUsd(
-            result.response.model ?? agent.model,
-            result.response.usage.promptTokens,
-            result.response.usage.completionTokens,
+            runModel,
+            runUsage.promptTokens,
+            runUsage.completionTokens,
           )
         : 0
       void (async () => {
@@ -221,11 +246,11 @@ export default async function agentRunRoutes(app: FastifyInstance) {
             userId: req.userId,
             ...(threadId ? { conversationId: threadId } : {}),
             agentId,
-            provider: result.usedProvider,
-            model: result.response.model ?? agent.model,
-            promptTokens: result.response.usage?.promptTokens ?? 0,
-            completionTokens: result.response.usage?.completionTokens ?? 0,
-            totalTokens: result.response.usage?.totalTokens ?? 0,
+            provider: runUsedProvider,
+            model: runModel,
+            promptTokens: runUsage?.promptTokens ?? 0,
+            completionTokens: runUsage?.completionTokens ?? 0,
+            totalTokens: runUsage?.totalTokens ?? 0,
             estimatedCostUsd,
             latencyMs,
           })
