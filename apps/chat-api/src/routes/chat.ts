@@ -483,6 +483,9 @@ export default async function chatRoutes(app: FastifyInstance) {
                 title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
                 ...(modelOverride ? { defaultModel: modelOverride } : {}),
               })
+              // Persist the user turn only when present; the assistant turn is always
+              // persisted because the model has already been invoked and usage logged.
+              // Notes sync also requires a user message for meaningful output.
               if (latestUserMessage) {
                 await persistMessage(prisma, {
                   id: randomUUID(),
