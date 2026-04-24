@@ -422,7 +422,10 @@ export default async function chatRoutes(app: FastifyInstance) {
           if (agentServiceResult.usage) {
             usageData = agentServiceResult.usage
           }
-          // Emit the full response content as a single token event
+          // NOTE: The internal agent-service does not yet support token-level streaming.
+          // The full response is emitted as a single token event so that the SSE
+          // contract is honoured. True streaming support for orchestrated agents is a
+          // future enhancement once the agent-service exposes a streaming endpoint.
           writeEvent({ type: 'token', token: agentServiceResult.message.content })
         } else {
           usedProvider = await registry.streamChatWithChain(

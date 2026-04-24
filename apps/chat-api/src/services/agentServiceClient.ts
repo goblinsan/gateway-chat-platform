@@ -45,6 +45,9 @@ export class AgentServiceError extends Error {
   }
 }
 
+/** Initial back-off duration in milliseconds for the first retry. Subsequent retries double this value. */
+const INITIAL_BACKOFF_MS = 200
+
 /**
  * Send a chat request to the internal agent-service.
  * Throws `AgentServiceError` on unrecoverable failure after all retries.
@@ -106,8 +109,8 @@ export async function sendToAgentService(
       }
 
       if (attempt < maxAttempts) {
-        // Exponential back-off: 200ms, 400ms, 800ms …
-        await sleep(200 * 2 ** (attempt - 1))
+        // Exponential back-off: INITIAL_BACKOFF_MS, 2×, 4×, …
+        await sleep(INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
       }
     } finally {
       clearTimeout(timer)
