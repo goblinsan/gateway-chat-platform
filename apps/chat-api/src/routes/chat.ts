@@ -185,31 +185,37 @@ export default async function chatRoutes(app: FastifyInstance) {
       let responseModel: string | undefined
       let responseUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
 
-      if (agent.executionMode === 'orchestrated') {
-        const agentServiceResult = await sendToAgentService({
-          agentId,
-          model: resolvedModel,
-          messages: providerMessages,
-          temperature: agent.temperature,
-          maxTokens: agent.maxTokens,
-          modelParams: agent.endpointConfig?.modelParams,
-        })
-        usedProvider = agentServiceResult.usedProvider
-        responseMessage = agentServiceResult.message
-        responseModel = agentServiceResult.model
-        responseUsage = agentServiceResult.usage
-      } else {
-        const result = await registry.sendChatWithChain(decision.orderedChain, {
-          model: resolvedModel,
-          messages: providerMessages,
-          temperature: agent.temperature,
-          maxTokens: agent.maxTokens,
-          modelParams: agent.endpointConfig?.modelParams,
-        })
-        usedProvider = result.usedProvider
-        responseMessage = { role: 'assistant', content: result.response.message.content }
-        responseModel = result.response.model
-        responseUsage = result.response.usage
+      try {
+        if (agent.executionMode === 'orchestrated') {
+          const agentServiceResult = await sendToAgentService({
+            agentId,
+            model: resolvedModel,
+            messages: providerMessages,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            modelParams: agent.endpointConfig?.modelParams,
+          })
+          usedProvider = agentServiceResult.usedProvider
+          responseMessage = agentServiceResult.message
+          responseModel = agentServiceResult.model
+          responseUsage = agentServiceResult.usage
+        } else {
+          const result = await registry.sendChatWithChain(decision.orderedChain, {
+            model: resolvedModel,
+            messages: providerMessages,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            modelParams: agent.endpointConfig?.modelParams,
+          })
+          usedProvider = result.usedProvider
+          responseMessage = { role: 'assistant', content: result.response.message.content }
+          responseModel = result.response.model
+          responseUsage = result.response.usage
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Chat execution failed'
+        req.log.error({ err, agentId }, 'Chat execution failed')
+        return reply.status(502).send({ error: message })
       }
 
       const latencyMs = Date.now() - startTime

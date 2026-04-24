@@ -56,7 +56,7 @@ export async function sendToAgentService(
 
   if (!env.AGENT_SERVICE_URL) {
     throw new AgentServiceError(
-      'AGENT_SERVICE_URL is not configured — cannot route request to agent-service',
+      'AGENT_SERVICE_URL is not configured: cannot route request to agent-service',
     )
   }
 

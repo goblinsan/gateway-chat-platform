@@ -233,7 +233,7 @@ describe('POST /api/chat — execution-mode routing', () => {
       },
     })
 
-    expect(res.statusCode).toBe(500)
+    expect(res.statusCode).toBe(502)
   })
 
   it('includes usage data from agent-service in the response', async () => {
