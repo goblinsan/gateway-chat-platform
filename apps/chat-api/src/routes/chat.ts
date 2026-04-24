@@ -397,6 +397,8 @@ export default async function chatRoutes(app: FastifyInstance) {
 
       const startTime = Date.now()
       let usageData: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
+      let accumulatedContent = ''
+      let streamedModel: string | undefined
 
       const writeEvent = (payload: object): boolean => {
         if (reply.raw.destroyed) return false
@@ -405,7 +407,7 @@ export default async function chatRoutes(app: FastifyInstance) {
 
       try {
         // Route based on execution mode (Issue #106, #107, #108).
-        // For orchestrated agents, call agent-service and emit the complete response as SSE events.
+        // For orchestrated agents, call agent-service and translate the response into SSE events.
         // For direct_provider agents, use the existing streaming provider path.
         let usedProvider: string
 
@@ -419,14 +421,15 @@ export default async function chatRoutes(app: FastifyInstance) {
             modelParams: agent.endpointConfig?.modelParams,
           })
           usedProvider = agentServiceResult.usedProvider
+          streamedModel = agentServiceResult.model
           if (agentServiceResult.usage) {
             usageData = agentServiceResult.usage
           }
           // NOTE: The internal agent-service does not yet support token-level streaming.
-          // The full response is emitted as a single token event so that the SSE
-          // contract is honoured. True streaming support for orchestrated agents is a
-          // future enhancement once the agent-service exposes a streaming endpoint.
-          writeEvent({ type: 'token', token: agentServiceResult.message.content })
+          // The full response is translated into a single token SSE event so that the
+          // UI SSE contract is honoured without exposing orchestrator internals.
+          accumulatedContent = agentServiceResult.message.content
+          writeEvent({ type: 'token', token: accumulatedContent })
         } else {
           usedProvider = await registry.streamChatWithChain(
             decision.orderedChain,
@@ -439,6 +442,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             },
             (event) => {
               if (event.type === 'token' && event.token !== undefined) {
+                accumulatedContent += event.token
                 writeEvent({ type: 'token', token: event.token })
               } else if (event.type === 'done' && event.usage) {
                 usageData = event.usage
@@ -450,10 +454,11 @@ export default async function chatRoutes(app: FastifyInstance) {
         }
 
         const latencyMs = Date.now() - startTime
+        const effectiveModel = streamedModel ?? resolvedModel
         const donePayload: AgentStreamDoneEvent = {
           type: 'done',
           agentId,
-          model: resolvedModel,
+          model: effectiveModel,
           usedProvider,
           latencyMs,
           ...(usageData ? { usage: usageData } : {}),
@@ -461,13 +466,16 @@ export default async function chatRoutes(app: FastifyInstance) {
         }
         writeEvent(donePayload)
 
-        // Persist usage data asynchronously
+        // Persist conversation data asynchronously (Issues #111, #112).
+        // The gateway remains the owner of thread/message persistence, usage logs,
+        // and notes sync regardless of whether execution was delegated to agent-service.
         if (threadId) {
           const estimatedCostUsd = usageData
-            ? estimateCostUsd(resolvedModel, usageData.promptTokens, usageData.completionTokens)
+            ? estimateCostUsd(effectiveModel, usageData.promptTokens, usageData.completionTokens)
             : 0
           void (async () => {
             try {
+              const latestUserMessage = [...messages].reverse().find((m) => m.role === 'user')
               await upsertConversation(prisma, {
                 id: threadId,
                 userId: req.userId,
@@ -475,18 +483,45 @@ export default async function chatRoutes(app: FastifyInstance) {
                 title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
                 ...(modelOverride ? { defaultModel: modelOverride } : {}),
               })
+              // Persist the user turn only when present; the assistant turn is always
+              // persisted because the model has already been invoked and usage logged.
+              // Notes sync also requires a user message for meaningful output.
+              if (latestUserMessage) {
+                await persistMessage(prisma, {
+                  id: randomUUID(),
+                  conversationId: threadId,
+                  role: 'user',
+                  content: latestUserMessage.content,
+                })
+              }
+              await persistMessage(prisma, {
+                id: randomUUID(),
+                conversationId: threadId,
+                role: 'assistant',
+                content: accumulatedContent,
+                model: effectiveModel,
+                provider: usedProvider,
+              })
               await persistUsageLog(prisma, {
                 userId: req.userId,
                 conversationId: threadId,
                 agentId,
                 provider: usedProvider,
-                model: resolvedModel,
+                model: effectiveModel,
                 promptTokens: usageData?.promptTokens ?? 0,
                 completionTokens: usageData?.completionTokens ?? 0,
                 totalTokens: usageData?.totalTokens ?? 0,
                 estimatedCostUsd,
                 latencyMs,
               })
+              if (latestUserMessage) {
+                await syncAgentConversationToNotes(agent, {
+                  threadId,
+                  source: 'chat',
+                  userMessage: latestUserMessage.content,
+                  assistantMessage: accumulatedContent,
+                })
+              }
             } catch (err) {
               req.log.warn({ err }, 'Failed to persist stream conversation data')
             }

@@ -35,6 +35,20 @@ vi.mock('../agents/registry', () => {
       enabled: true,
     },
     {
+      id: 'orchestrated-notes-agent',
+      name: 'Orchestrated Notes Agent',
+      icon: '📝',
+      color: '#f59e0b',
+      providerName: 'lm-studio-a',
+      model: 'local-model',
+      costClass: 'free',
+      systemPrompt: 'You are an orchestrated notes agent.',
+      temperature: 0.5,
+      executionMode: 'orchestrated',
+      enabled: true,
+      endpointConfig: { modelParams: { notesSync: { repoPath: '/opt/notes' } } },
+    },
+    {
       id: 'legacy-agent',
       name: 'Legacy Agent (no executionMode)',
       icon: '⚡',
@@ -66,6 +80,14 @@ const MOCK_REGISTRY = {
     },
     usedProvider: 'lm-studio-a',
   }),
+  streamChatWithChain: vi.fn().mockImplementation(
+    async (_chain: string[], _req: unknown, onEvent: (e: { type: string; token?: string; usage?: unknown }) => void) => {
+      onEvent({ type: 'token', token: 'Direct ' })
+      onEvent({ type: 'token', token: 'stream.' })
+      onEvent({ type: 'done', usage: { promptTokens: 5, completionTokens: 3, totalTokens: 8 } })
+      return 'lm-studio-a'
+    },
+  ),
   getAll: vi.fn().mockReturnValue([
     { name: 'lm-studio-a' },
     { name: 'lm-studio-b' },
@@ -97,14 +119,19 @@ vi.mock('../services/db', () => ({
   }),
 }))
 
+const mockUpsertConversation = vi.fn()
+const mockPersistMessage = vi.fn()
+const mockPersistUsageLog = vi.fn()
+const mockSyncAgentConversationToNotes = vi.fn()
+
 vi.mock('../services/persistence', () => ({
-  upsertConversation: vi.fn(),
-  persistMessage: vi.fn(),
-  persistUsageLog: vi.fn(),
+  upsertConversation: (...args: unknown[]) => mockUpsertConversation(...args),
+  persistMessage: (...args: unknown[]) => mockPersistMessage(...args),
+  persistUsageLog: (...args: unknown[]) => mockPersistUsageLog(...args),
 }))
 
 vi.mock('../services/notesSync', () => ({
-  syncAgentConversationToNotes: vi.fn(),
+  syncAgentConversationToNotes: (...args: unknown[]) => mockSyncAgentConversationToNotes(...args),
 }))
 
 vi.mock('../services/quotaService', () => ({
@@ -126,6 +153,14 @@ beforeEach(() => {
     },
     usedProvider: 'lm-studio-a',
   })
+  MOCK_REGISTRY.streamChatWithChain.mockImplementation(
+    async (_chain: string[], _req: unknown, onEvent: (e: { type: string; token?: string; usage?: unknown }) => void) => {
+      onEvent({ type: 'token', token: 'Direct ' })
+      onEvent({ type: 'token', token: 'stream.' })
+      onEvent({ type: 'done', usage: { promptTokens: 5, completionTokens: 3, totalTokens: 8 } })
+      return 'lm-studio-a'
+    },
+  )
   mockSendToAgentService.mockResolvedValue({
     agentId: 'orchestrated-agent',
     usedProvider: 'agent-service',
@@ -271,5 +306,202 @@ describe('POST /api/chat — execution-mode routing', () => {
     const body = JSON.parse(res.payload)
     expect(body.routingExplanation).toBeDefined()
     expect(body.routingExplanation.selectedProvider).toBeDefined()
+  })
+})
+
+/**
+ * Streaming endpoint tests for execution-mode-aware routing (Issues #110, #111, #112).
+ *
+ * Verifies that /api/chat/stream correctly translates orchestrator events into the
+ * SSE contract and that gateway-chat-platform remains the owner of persistence and
+ * notes sync regardless of whether execution is delegated to agent-service.
+ */
+describe('POST /api/chat/stream — execution-mode routing', () => {
+  function parseSseEvents(rawBody: string): Array<Record<string, unknown>> {
+    return rawBody
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>)
+  }
+
+  it('emits orchestrated response as a single SSE token event', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'orchestrated-agent',
+        messages: [{ role: 'user', content: 'Hello' }],
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const events = parseSseEvents(res.payload)
+    const tokenEvents = events.filter((e) => e.type === 'token')
+    expect(tokenEvents).toHaveLength(1)
+    expect(tokenEvents[0].token).toBe('Orchestrated response.')
+  })
+
+  it('emits a done event after the orchestrated response', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'orchestrated-agent',
+        messages: [{ role: 'user', content: 'Hello' }],
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const events = parseSseEvents(res.payload)
+    const doneEvents = events.filter((e) => e.type === 'done')
+    expect(doneEvents).toHaveLength(1)
+    expect(doneEvents[0].usedProvider).toBe('agent-service')
+  })
+
+  it('persists user and assistant messages for orchestrated streaming runs', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'orchestrated-agent',
+        threadId: 'stream-thread-1',
+        messages: [{ role: 'user', content: 'Orchestrate me.' }],
+      },
+    })
+
+    // Allow async persistence to flush
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(mockUpsertConversation).toHaveBeenCalled()
+
+    const userCall = mockPersistMessage.mock.calls.find(
+      (c: unknown[]) => (c[1] as { role: string }).role === 'user',
+    )
+    expect(userCall).toBeDefined()
+    expect((userCall![1] as { content: string }).content).toBe('Orchestrate me.')
+
+    const assistantCall = mockPersistMessage.mock.calls.find(
+      (c: unknown[]) => (c[1] as { role: string }).role === 'assistant',
+    )
+    expect(assistantCall).toBeDefined()
+    expect((assistantCall![1] as { content: string }).content).toBe('Orchestrated response.')
+
+    expect(mockPersistUsageLog).toHaveBeenCalled()
+  })
+
+  it('persists the model returned by agent-service for orchestrated streaming runs', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'orchestrated-agent',
+        threadId: 'stream-thread-model',
+        messages: [{ role: 'user', content: 'Hello' }],
+      },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const assistantCall = mockPersistMessage.mock.calls.find(
+      (c: unknown[]) => (c[1] as { role: string }).role === 'assistant',
+    )
+    expect(assistantCall).toBeDefined()
+    expect((assistantCall![1] as { model: string }).model).toBe('local-model')
+    expect((assistantCall![1] as { provider: string }).provider).toBe('agent-service')
+  })
+
+  it('persists user and assistant messages for direct_provider streaming runs', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'direct-agent',
+        threadId: 'stream-thread-direct',
+        messages: [{ role: 'user', content: 'Hello direct.' }],
+      },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const userCall = mockPersistMessage.mock.calls.find(
+      (c: unknown[]) => (c[1] as { role: string }).role === 'user',
+    )
+    expect(userCall).toBeDefined()
+
+    const assistantCall = mockPersistMessage.mock.calls.find(
+      (c: unknown[]) => (c[1] as { role: string }).role === 'assistant',
+    )
+    expect(assistantCall).toBeDefined()
+    // Accumulated tokens from the mock: 'Direct ' + 'stream.'
+    expect((assistantCall![1] as { content: string }).content).toBe('Direct stream.')
+  })
+
+  it('does not persist messages when threadId is absent', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'orchestrated-agent',
+        messages: [{ role: 'user', content: 'No thread.' }],
+      },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(mockPersistMessage).not.toHaveBeenCalled()
+    expect(mockPersistUsageLog).not.toHaveBeenCalled()
+  })
+
+  it('calls syncAgentConversationToNotes after orchestrated streaming run when notes sync is configured', async () => {
+    mockSendToAgentService.mockResolvedValueOnce({
+      agentId: 'orchestrated-notes-agent',
+      usedProvider: 'agent-service',
+      model: 'local-model',
+      message: { role: 'assistant', content: 'Notes response.' },
+      usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
+    })
+
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'orchestrated-notes-agent',
+        threadId: 'stream-notes-thread',
+        messages: [{ role: 'user', content: 'Sync to notes.' }],
+      },
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(mockSyncAgentConversationToNotes).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'orchestrated-notes-agent' }),
+      expect.objectContaining({
+        threadId: 'stream-notes-thread',
+        source: 'chat',
+        userMessage: 'Sync to notes.',
+        assistantMessage: 'Notes response.',
+      }),
+    )
   })
 })
