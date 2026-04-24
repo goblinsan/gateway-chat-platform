@@ -25,9 +25,9 @@ const MOCK_REGISTRY = {
     usedProvider: 'lm-studio-a',
   }),
   getAll: vi.fn().mockReturnValue([
-    { name: 'lm-studio-a', listModels: vi.fn().mockResolvedValue(['local-model', 'overridden-model']) },
-    { name: 'lm-studio-b', listModels: vi.fn().mockResolvedValue(['builder-model']) },
-    { name: 'openai', listModels: vi.fn().mockResolvedValue(['gpt-4o', 'gpt-4o-mini']) },
+    { name: 'lm-studio-a', listModels: vi.fn().mockResolvedValue([{ id: 'local-model', name: 'local-model' }, { id: 'overridden-model', name: 'overridden-model' }]) },
+    { name: 'lm-studio-b', listModels: vi.fn().mockResolvedValue([{ id: 'builder-model', name: 'builder-model' }]) },
+    { name: 'openai', listModels: vi.fn().mockResolvedValue([{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }]) },
   ]),
 }
 
@@ -80,9 +80,9 @@ beforeEach(() => {
     usedProvider: 'lm-studio-a',
   })
   MOCK_REGISTRY.getAll.mockReturnValue([
-    { name: 'lm-studio-a', listModels: vi.fn().mockResolvedValue(['local-model', 'overridden-model']) },
-    { name: 'lm-studio-b', listModels: vi.fn().mockResolvedValue(['builder-model']) },
-    { name: 'openai', listModels: vi.fn().mockResolvedValue(['gpt-4o', 'gpt-4o-mini']) },
+    { name: 'lm-studio-a', listModels: vi.fn().mockResolvedValue([{ id: 'local-model', name: 'local-model' }, { id: 'overridden-model', name: 'overridden-model' }]) },
+    { name: 'lm-studio-b', listModels: vi.fn().mockResolvedValue([{ id: 'builder-model', name: 'builder-model' }]) },
+    { name: 'openai', listModels: vi.fn().mockResolvedValue([{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }]) },
   ])
 })
 

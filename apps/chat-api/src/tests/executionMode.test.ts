@@ -271,6 +271,74 @@ describe('POST /api/chat — execution-mode routing', () => {
     expect(res.statusCode).toBe(502)
   })
 
+  it('returns 502 when agent-service times out for an orchestrated agent', async () => {
+    mockSendToAgentService.mockRejectedValueOnce(
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'AbortError' }),
+    )
+
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'orchestrated-agent',
+        messages: [{ role: 'user', content: 'Hello' }],
+      },
+    })
+
+    expect(res.statusCode).toBe(502)
+    const body = JSON.parse(res.payload)
+    expect(body.error).toBeDefined()
+  })
+
+  it('direct_provider agent is unaffected when agent-service is unavailable', async () => {
+    // Simulate agent-service being completely down — direct agents must still work.
+    mockSendToAgentService.mockRejectedValue(new Error('Connection refused'))
+
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'direct-agent',
+        messages: [{ role: 'user', content: 'Hello from direct agent.' }],
+      },
+    })
+
+    // The direct agent must succeed regardless of agent-service state.
+    expect(res.statusCode).toBe(200)
+    expect(MOCK_REGISTRY.sendChatWithChain).toHaveBeenCalledOnce()
+    expect(mockSendToAgentService).not.toHaveBeenCalled()
+
+    const body = JSON.parse(res.payload)
+    expect(body.message.content).toBe('Direct provider response.')
+    expect(body.usedProvider).toBe('lm-studio-a')
+  })
+
+  it('legacy agent (no executionMode) is unaffected when agent-service is unavailable', async () => {
+    mockSendToAgentService.mockRejectedValue(new Error('Connection refused'))
+
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'legacy-agent',
+        messages: [{ role: 'user', content: 'Hello from legacy agent.' }],
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(MOCK_REGISTRY.sendChatWithChain).toHaveBeenCalledOnce()
+    expect(mockSendToAgentService).not.toHaveBeenCalled()
+  })
+
   it('includes usage data from agent-service in the response', async () => {
     const app = Fastify()
     await app.register(chatRoutes, { prefix: '/api' })
@@ -503,5 +571,52 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
         assistantMessage: 'Notes response.',
       }),
     )
+  })
+
+  it('emits an error SSE event when agent-service times out during a streaming request', async () => {
+    mockSendToAgentService.mockRejectedValueOnce(
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'AbortError' }),
+    )
+
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'orchestrated-agent',
+        messages: [{ role: 'user', content: 'Hello' }],
+      },
+    })
+
+    // The streaming connection is established (200) before execution begins.
+    // Failures are communicated via SSE error events on the open stream.
+    expect(res.statusCode).toBe(200)
+    const events = parseSseEvents(res.payload)
+    const errorEvents = events.filter((e) => e.type === 'error')
+    expect(errorEvents).toHaveLength(1)
+    expect(errorEvents[0].error).toContain('aborted')
+  })
+
+  it('direct_provider streaming is unaffected when agent-service is unavailable', async () => {
+    mockSendToAgentService.mockRejectedValue(new Error('Connection refused'))
+
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'direct-agent',
+        messages: [{ role: 'user', content: 'Hello direct stream.' }],
+      },
+    })
+
+    // Direct-provider streaming must succeed regardless of agent-service state.
+    expect(res.statusCode).toBe(200)
+    expect(mockSendToAgentService).not.toHaveBeenCalled()
+    expect(MOCK_REGISTRY.streamChatWithChain).toHaveBeenCalledOnce()
   })
 })
