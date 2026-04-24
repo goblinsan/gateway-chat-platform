@@ -154,6 +154,22 @@ export interface AgentRunResponse {
     userId: string
     channelId: string
   }
+  /**
+   * Orchestration status for agent-service runs (Issue #115).
+   * Absent or `'completed'` means normal completion.
+   * `'approval_required'` and `'paused'` indicate a suspended orchestration.
+   * Callers should treat HTTP 202 responses as paused/pending.
+   */
+  status?: 'completed' | 'approval_required' | 'paused'
+  /**
+   * Additional state detail when status is `'approval_required'` or `'paused'`.
+   * Provided for operator inspection and future UI-level approval handling (Issue #115).
+   */
+  orchestrationState?: {
+    checkpointId?: string
+    reason?: string
+    requiredApprovers?: string[]
+  }
 }
 
 /** Metadata returned when an automation run includes TTS delivery */
