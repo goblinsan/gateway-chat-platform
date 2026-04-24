@@ -18,6 +18,18 @@ export interface AgentServiceRequest {
   temperature?: number
   maxTokens?: number
   modelParams?: Record<string, unknown>
+  /** Workflow identifier passed from the automation context (Issue #114). */
+  workflowId?: string
+  /** Originating source passed from the automation context (Issue #114). */
+  workflowSource?: string
+  /** Delivery mode requested by the caller (Issue #114). */
+  deliveryMode?: string
+  /** Target user for inbox/channel delivery (Issue #114). */
+  userId?: string
+  /** Target channel for inbox/channel delivery (Issue #114). */
+  channelId?: string
+  /** Thread identifier for conversation attribution (Issue #114). */
+  threadId?: string
 }
 
 export interface AgentServiceResponse {
@@ -33,6 +45,26 @@ export interface AgentServiceResponse {
     completionTokens: number
     totalTokens: number
   }
+  /**
+   * Orchestration status returned by the agent-service (Issue #115).
+   * Absent or `'completed'` means normal completion.
+   * `'approval_required'` and `'paused'` indicate the run has been suspended.
+   */
+  status?: 'completed' | 'approval_required' | 'paused'
+  /**
+   * Additional orchestration state detail surfaced when the run is paused
+   * or requires approval (Issue #115).
+   */
+  orchestrationState?: {
+    checkpointId?: string
+    reason?: string
+    requiredApprovers?: string[]
+  }
+  /**
+   * Optional thread identifier returned by the orchestrator for inbox/chat
+   * delivery attribution (Issue #116).
+   */
+  resultThreadId?: string
 }
 
 export class AgentServiceError extends Error {

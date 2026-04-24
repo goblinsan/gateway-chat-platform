@@ -26,6 +26,19 @@ vi.mock('../agents/registry', () => {
       },
       enabled: true,
     },
+    {
+      id: 'orchestrated-run-agent',
+      name: 'Orchestrated Run Agent',
+      icon: '🤖',
+      color: '#6366f1',
+      providerName: 'lm-studio-a',
+      model: 'orchestrated-model',
+      costClass: 'free',
+      systemPrompt: 'You are an orchestrated automation agent.',
+      temperature: 0.5,
+      executionMode: 'orchestrated',
+      enabled: true,
+    },
   ]
   return {
     listAgents: () => AGENTS,
@@ -107,6 +120,17 @@ vi.mock('../config/env', () => ({
   getEnv: () => mockEnv,
 }))
 
+const mockSendToAgentService = vi.fn()
+vi.mock('../services/agentServiceClient', () => ({
+  sendToAgentService: (...args: unknown[]) => mockSendToAgentService(...args),
+  AgentServiceError: class AgentServiceError extends Error {
+    constructor(msg: string) {
+      super(msg)
+      this.name = 'AgentServiceError'
+    }
+  },
+}))
+
 import Fastify from 'fastify'
 import agentRunRoutes from '../routes/run'
 
@@ -117,6 +141,14 @@ beforeEach(() => {
     id: 'inbox-1',
     userId: 'me',
     channelId: 'coach',
+  })
+  mockSendToAgentService.mockResolvedValue({
+    agentId: 'orchestrated-run-agent',
+    usedProvider: 'agent-service',
+    model: 'orchestrated-model',
+    message: { role: 'assistant', content: 'Orchestrated result.' },
+    usage: { promptTokens: 15, completionTokens: 8, totalTokens: 23 },
+    status: 'completed',
   })
   MOCK_REGISTRY.sendChatWithChain.mockResolvedValue({
     response: {
@@ -415,5 +447,221 @@ describe('POST /api/agents/:id/run', () => {
     expect(body.content).toBe('Analysis complete.')
     expect(body.tts).toBeDefined()
     expect(body.tts.contentType).toBe('')
+  })
+
+  // ── Issue #114: Automation delegation with workflow/delivery metadata ──────
+
+  it('passes normalized workflow and delivery metadata to agent-service for orchestrated runs', async () => {
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/agents/orchestrated-run-agent/run',
+      payload: {
+        prompt: 'Run scheduled task.',
+        context: {
+          workflowId: 'wf-sched-001',
+          source: 'scheduler',
+          metadata: { threadId: 'ctx-thread-1' },
+        },
+        delivery: {
+          mode: 'inbox',
+          userId: 'svc-user',
+          channelId: 'ops',
+          threadId: 'delivery-thread-1',
+        },
+      },
+    })
+
+    expect(mockSendToAgentService).toHaveBeenCalledOnce()
+    const [request] = mockSendToAgentService.mock.calls[0] as [Record<string, unknown>]
+    expect(request.agentId).toBe('orchestrated-run-agent')
+    expect(request.workflowId).toBe('wf-sched-001')
+    expect(request.workflowSource).toBe('scheduler')
+    expect(request.deliveryMode).toBe('inbox')
+    expect(request.userId).toBe('svc-user')
+    expect(request.channelId).toBe('ops')
+    // delivery.threadId takes precedence over context.metadata.threadId
+    expect(request.threadId).toBe('delivery-thread-1')
+  })
+
+  it('falls back to context metadata threadId when delivery.threadId is absent', async () => {
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/agents/orchestrated-run-agent/run',
+      payload: {
+        prompt: 'Run check.',
+        context: {
+          workflowId: 'wf-check',
+          source: 'cron',
+          metadata: { threadId: 'meta-thread-99' },
+        },
+        delivery: { mode: 'inbox', userId: 'u1', channelId: 'c1' },
+      },
+    })
+
+    const [request] = mockSendToAgentService.mock.calls[0] as [Record<string, unknown>]
+    expect(request.threadId).toBe('meta-thread-99')
+  })
+
+  // ── Issue #115: Approval-required and paused orchestration states ─────────
+
+  it('returns 202 with status approval_required when orchestrator signals approval needed', async () => {
+    mockSendToAgentService.mockResolvedValueOnce({
+      agentId: 'orchestrated-run-agent',
+      usedProvider: 'agent-service',
+      model: 'orchestrated-model',
+      message: { role: 'assistant', content: '' },
+      status: 'approval_required',
+      orchestrationState: {
+        checkpointId: 'cp-001',
+        reason: 'Action requires manager sign-off',
+        requiredApprovers: ['manager@example.com'],
+      },
+    })
+
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/orchestrated-run-agent/run',
+      payload: { prompt: 'Trigger approval flow.' },
+    })
+
+    expect(res.statusCode).toBe(202)
+    const body = JSON.parse(res.payload)
+    expect(body.status).toBe('approval_required')
+    expect(body.agentId).toBe('orchestrated-run-agent')
+    expect(body.orchestrationState).toEqual({
+      checkpointId: 'cp-001',
+      reason: 'Action requires manager sign-off',
+      requiredApprovers: ['manager@example.com'],
+    })
+    expect(body.content).toBe('')
+    // Inbox publish must NOT happen for paused runs
+    expect(mockPublishInboxMessage).not.toHaveBeenCalled()
+  })
+
+  it('returns 202 with status paused when orchestrator signals a paused run', async () => {
+    mockSendToAgentService.mockResolvedValueOnce({
+      agentId: 'orchestrated-run-agent',
+      usedProvider: 'agent-service',
+      model: 'orchestrated-model',
+      message: { role: 'assistant', content: '' },
+      status: 'paused',
+      orchestrationState: {
+        checkpointId: 'cp-002',
+        reason: 'Waiting for external event',
+      },
+    })
+
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/orchestrated-run-agent/run',
+      payload: { prompt: 'Trigger pause.' },
+    })
+
+    expect(res.statusCode).toBe(202)
+    const body = JSON.parse(res.payload)
+    expect(body.status).toBe('paused')
+    expect(body.orchestrationState.checkpointId).toBe('cp-002')
+  })
+
+  it('returns 200 for a completed orchestrated run (normal flow)', async () => {
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/orchestrated-run-agent/run',
+      payload: { prompt: 'Run normally.' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.content).toBe('Orchestrated result.')
+    expect(body.usedProvider).toBe('agent-service')
+    expect(body.status).toBeUndefined()
+  })
+
+  // ── Issue #116: Inbox delivery for orchestrated runs ──────────────────────
+
+  it('publishes orchestrated completed run to inbox with workflow attribution', async () => {
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agents/orchestrated-run-agent/run',
+      payload: {
+        prompt: 'Morning briefing.',
+        context: {
+          workflowId: 'wf-morning',
+          source: 'scheduler',
+        },
+        delivery: {
+          mode: 'inbox',
+          userId: 'me',
+          channelId: 'ops',
+          title: 'Morning Brief',
+          threadId: 'morning-thread',
+        },
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(mockPublishInboxMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'orchestrated-run-agent',
+        userId: 'me',
+        channelId: 'ops',
+        title: 'Morning Brief',
+        threadId: 'morning-thread',
+        metadata: { workflowId: 'wf-morning', source: 'scheduler' },
+      }),
+    )
+    const body = JSON.parse(res.payload)
+    expect(body.inbox).toBeDefined()
+    expect(body.inbox.messageId).toBe('inbox-1')
+  })
+
+  it('prefers resultThreadId from orchestrator over delivery threadId for inbox attribution', async () => {
+    mockSendToAgentService.mockResolvedValueOnce({
+      agentId: 'orchestrated-run-agent',
+      usedProvider: 'agent-service',
+      model: 'orchestrated-model',
+      message: { role: 'assistant', content: 'Done.' },
+      status: 'completed',
+      resultThreadId: 'orch-thread-xyz',
+    })
+
+    const app = Fastify()
+    await app.register(agentRunRoutes, { prefix: '/api' })
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/agents/orchestrated-run-agent/run',
+      payload: {
+        prompt: 'Run with orch thread.',
+        delivery: {
+          mode: 'inbox',
+          userId: 'me',
+          channelId: 'ops',
+          threadId: 'caller-thread',
+        },
+      },
+    })
+
+    expect(mockPublishInboxMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: 'orch-thread-xyz' }),
+    )
   })
 })

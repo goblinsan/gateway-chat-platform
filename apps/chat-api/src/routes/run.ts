@@ -72,6 +72,11 @@ export default async function agentRunRoutes(app: FastifyInstance) {
 
       const registry = getProviderRegistry()
 
+      // Extract automation metadata early so it is available throughout the handler.
+      const metadata = context?.metadata && typeof context.metadata === 'object'
+        ? context.metadata as Record<string, unknown>
+        : undefined
+
       // Build provider messages via the automation context helper
       const providerMessages: ProviderMessage[] = buildAutomationMessages(agent, prompt, context)
 
@@ -102,9 +107,19 @@ export default async function agentRunRoutes(app: FastifyInstance) {
       let runModel: string
       let runContent: string
       let runUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
+      let runResultThreadId: string | undefined
 
       try {
         if (agent.executionMode === 'orchestrated') {
+          // Resolve the thread ID from delivery spec or context metadata so the
+          // orchestrator can attribute its results correctly (Issue #116).
+          const resolvedThreadId =
+            typeof delivery?.threadId === 'string'
+              ? delivery.threadId
+              : typeof metadata?.threadId === 'string'
+                ? metadata.threadId
+                : undefined
+
           const agentServiceResult = await sendToAgentService({
             agentId,
             model: agent.model,
@@ -112,11 +127,48 @@ export default async function agentRunRoutes(app: FastifyInstance) {
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
             modelParams: agent.endpointConfig?.modelParams,
+            // Normalized workflow + delivery metadata (Issue #114)
+            workflowId: context?.workflowId,
+            workflowSource: context?.source,
+            deliveryMode: delivery?.mode,
+            userId: typeof delivery?.userId === 'string' ? delivery.userId : undefined,
+            channelId: typeof delivery?.channelId === 'string' ? delivery.channelId : undefined,
+            threadId: resolvedThreadId,
           })
+
+          // Surface approval-required and paused states instead of treating them
+          // as generic errors or empty responses (Issue #115).
+          const orchStatus = agentServiceResult.status
+          if (orchStatus === 'approval_required' || orchStatus === 'paused') {
+            const latencyMs = Date.now() - startTime
+            req.log.info(
+              {
+                agentId,
+                status: orchStatus,
+                orchestrationState: agentServiceResult.orchestrationState,
+              },
+              'Automation run: orchestration paused',
+            )
+            const pausedResponse: AgentRunResponse = {
+              agentId,
+              usedProvider: agentServiceResult.usedProvider,
+              model: agentServiceResult.model,
+              content: '',
+              latencyMs,
+              status: orchStatus,
+              ...(agentServiceResult.orchestrationState
+                ? { orchestrationState: agentServiceResult.orchestrationState }
+                : {}),
+            }
+            return reply.status(202).send(pausedResponse)
+          }
+
           runUsedProvider = agentServiceResult.usedProvider
           runModel = agentServiceResult.model
           runContent = agentServiceResult.message.content
           runUsage = agentServiceResult.usage
+          // Capture optional thread attribution returned by the orchestrator (Issue #116).
+          runResultThreadId = agentServiceResult.resultThreadId
         } else {
           const result = await registry.sendChatWithChain(decision.orderedChain, {
             model: agent.model,
@@ -146,9 +198,6 @@ export default async function agentRunRoutes(app: FastifyInstance) {
         latencyMs,
         ...(runUsage ? { usage: runUsage } : {}),
       }
-      const metadata = context?.metadata && typeof context.metadata === 'object'
-        ? context.metadata as Record<string, unknown>
-        : undefined
 
       // If TTS delivery requested, synthesize audio and attach metadata
       if (delivery?.mode === 'tts') {
@@ -174,18 +223,20 @@ export default async function agentRunRoutes(app: FastifyInstance) {
       }
 
       if (delivery?.mode === 'inbox') {
+        // Prefer thread attribution from the orchestrator, then delivery spec, then context
+        // metadata. This ensures issue #116: orchestrated results are correctly thread-linked.
+        const inboxThreadId =
+          runResultThreadId ??
+          (typeof delivery.threadId === 'string' ? delivery.threadId : undefined) ??
+          (typeof metadata?.threadId === 'string' ? metadata.threadId : undefined)
+
         const inboxItem = await publishInboxMessage({
           userId: typeof delivery.userId === 'string' ? delivery.userId : undefined,
           channelId: typeof delivery.channelId === 'string' ? delivery.channelId : undefined,
           agentId,
           content: response.content,
           kind: typeof delivery.kind === 'string' ? delivery.kind : 'coach_prompt',
-          threadId:
-            typeof delivery.threadId === 'string'
-              ? delivery.threadId
-              : typeof metadata?.threadId === 'string'
-                ? metadata.threadId
-                : undefined,
+          threadId: inboxThreadId,
           threadTitle:
             typeof delivery.threadTitle === 'string'
               ? delivery.threadTitle
