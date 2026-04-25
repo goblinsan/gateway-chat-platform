@@ -148,8 +148,11 @@ export default async function chatRoutes(app: FastifyInstance) {
         'Routing decision',
       )
 
-      // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94)
-      if (modelOverride && !(await isKnownModelOverride(registry, modelOverride))) {
+      // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94).
+      // For orchestrated agents, model validation is delegated to the internal
+      // agent-service because the gateway's direct provider registry is not the
+      // source of truth for orchestrated backend availability.
+      if (modelOverride && agent.executionMode !== 'orchestrated' && !(await isKnownModelOverride(registry, modelOverride))) {
         return reply.status(400).send({
           error: `Unknown model override '${modelOverride}'`,
         })
@@ -358,8 +361,11 @@ export default async function chatRoutes(app: FastifyInstance) {
         'Routing decision',
       )
 
-      // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94)
-      if (modelOverride && !(await isKnownModelOverride(registry, modelOverride))) {
+      // Use per-message modelOverride if provided, otherwise fall back to agent model (Issue #94).
+      // For orchestrated agents, model validation is delegated to the internal
+      // agent-service because the gateway's direct provider registry is not the
+      // source of truth for orchestrated backend availability.
+      if (modelOverride && agent.executionMode !== 'orchestrated' && !(await isKnownModelOverride(registry, modelOverride))) {
         void reply.status(400).send({
           error: `Unknown model override '${modelOverride}'`,
         })

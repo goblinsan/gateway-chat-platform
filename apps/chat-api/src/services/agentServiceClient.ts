@@ -95,7 +95,12 @@ export async function sendToAgentService(
     )
   }
 
-  const url = `${env.AGENT_SERVICE_URL}/run`
+  const isAutomationRequest = Boolean(
+    request.workflowId || request.workflowSource || request.deliveryMode || request.userId || request.channelId,
+  )
+  const url = isAutomationRequest
+    ? `${env.AGENT_SERVICE_URL}/internal/automation`
+    : `${env.AGENT_SERVICE_URL}/internal/chat`
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
@@ -104,7 +109,38 @@ export async function sendToAgentService(
     headers['Authorization'] = `Bearer ${env.AGENT_SERVICE_API_KEY}`
   }
 
-  const body = JSON.stringify(request)
+  const body = JSON.stringify(
+    isAutomationRequest
+      ? {
+          source: request.workflowSource ?? 'gateway-chat-platform',
+          job_type: request.workflowId ? 'gateway_workflow' : 'gateway_automation',
+          workflow_id: request.workflowId,
+          prompt: request.messages.filter((message) => message.role === 'user').at(-1)?.content ?? '',
+          messages: request.messages,
+          model_preferences: {
+            preferred: request.model,
+            ...(typeof request.maxTokens === 'number' ? { max_tokens: request.maxTokens } : {}),
+          },
+          response_mode: 'sync',
+          metadata: {
+            ...(request.deliveryMode ? { delivery_mode: request.deliveryMode } : {}),
+            ...(request.userId ? { user_id: request.userId } : {}),
+            ...(request.channelId ? { channel_id: request.channelId } : {}),
+            ...(request.threadId ? { thread_id: request.threadId } : {}),
+          },
+        }
+      : {
+          request_id: request.threadId ?? request.agentId,
+          thread_id: request.threadId,
+          user_id: request.userId,
+          agent_id: request.agentId,
+          messages: request.messages,
+          model_preferences: {
+            preferred: request.model,
+            ...(typeof request.maxTokens === 'number' ? { max_tokens: request.maxTokens } : {}),
+          },
+        },
+  )
   const timeoutMs = env.AGENT_SERVICE_TIMEOUT_MS
   const maxAttempts = Math.max(1, env.AGENT_SERVICE_RETRY_COUNT + 1)
 
@@ -130,8 +166,20 @@ export async function sendToAgentService(
         )
       }
 
-      const data = (await res.json()) as AgentServiceResponse
-      return data
+      const data = await res.json() as Record<string, unknown>
+      if (isAutomationRequest) {
+        return {
+          agentId: request.agentId,
+          usedProvider: 'agent-service',
+          model: String(data.model_backend ?? request.model),
+          message: {
+            role: 'assistant',
+            content: String(data.output ?? ''),
+          },
+          ...(request.threadId ? { resultThreadId: request.threadId } : {}),
+        }
+      }
+      return data as AgentServiceResponse
     } catch (err) {
       lastError = err instanceof Error ? err : new AgentServiceError(String(err))
 

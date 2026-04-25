@@ -47,7 +47,7 @@ describe('sendToAgentService', () => {
     vi.clearAllMocks()
   })
 
-  it('sends request to AGENT_SERVICE_URL/run with Authorization header', async () => {
+  it('sends chat requests to AGENT_SERVICE_URL/internal/chat with Authorization header', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => MOCK_RESPONSE,
@@ -57,7 +57,7 @@ describe('sendToAgentService', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('http://agent-service:8080/run')
+    expect(url).toBe('http://agent-service:8080/internal/chat')
     expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer test-api-key')
     expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json')
   })
@@ -71,11 +71,11 @@ describe('sendToAgentService', () => {
     await sendToAgentService(MOCK_REQUEST)
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    const body = JSON.parse(init.body as string) as typeof MOCK_REQUEST
-    expect(body.agentId).toBe('local-analyst')
-    expect(body.model).toBe('local-model')
-    expect(body.messages).toHaveLength(2)
-    expect(body.temperature).toBe(0.3)
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body.agent_id).toBe('local-analyst')
+    expect((body.model_preferences as Record<string, unknown>).preferred).toBe('local-model')
+    expect((body.messages as unknown[]).length).toBe(2)
+    expect(body.thread_id).toBeUndefined()
   })
 
   it('returns the normalized response from the agent-service', async () => {
@@ -160,6 +160,32 @@ describe('sendToAgentService', () => {
     await expect(sendToAgentService(MOCK_REQUEST)).rejects.toThrow(AgentServiceError)
     // Only 1 call — no retry on client errors
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes automation requests to AGENT_SERVICE_URL/internal/automation with normalized body', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ run_id: 'run-1', status: 'completed', output: 'Automation complete.', model_backend: 'local-model' }),
+    })
+
+    const result = await sendToAgentService({
+      ...MOCK_REQUEST,
+      workflowId: 'wf-123',
+      workflowSource: 'scheduler',
+      deliveryMode: 'inbox',
+      userId: 'me',
+      channelId: 'ops',
+      threadId: 'thread-1',
+    })
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('http://agent-service:8080/internal/automation')
+    const body = JSON.parse(init.body as string) as Record<string, unknown>
+    expect(body.source).toBe('scheduler')
+    expect(body.job_type).toBe('gateway_workflow')
+    expect(body.response_mode).toBe('sync')
+    expect(result.message.content).toBe('Automation complete.')
+    expect(result.usedProvider).toBe('agent-service')
   })
 
   it('succeeds on the second attempt after a transient server error', async () => {
