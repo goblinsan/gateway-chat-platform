@@ -21,6 +21,13 @@ export interface MessageMeta {
   inboxMessageId?: string
   inboxKind?: string
   inboxChannelId?: string
+  status?: 'completed' | 'approval_required' | 'paused' | 'approved' | 'denied'
+  orchestrationState?: {
+    runId?: string
+    checkpointId?: string
+    reason?: string
+    requiredApprovers?: string[]
+  }
   model?: string
   usedProvider?: string
   latencyMs?: number

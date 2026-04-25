@@ -75,6 +75,7 @@ export interface AgentStreamDoneEvent {
   routingExplanation?: RoutingExplanation
   status?: 'completed' | 'approval_required' | 'paused'
   orchestrationState?: {
+    runId?: string
     checkpointId?: string
     reason?: string
     requiredApprovers?: string[]
@@ -172,6 +173,7 @@ export interface AgentRunResponse {
    * Provided for operator inspection and future UI-level approval handling (Issue #115).
    */
   orchestrationState?: {
+    runId?: string
     checkpointId?: string
     reason?: string
     requiredApprovers?: string[]

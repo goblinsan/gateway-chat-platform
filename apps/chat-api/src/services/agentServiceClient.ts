@@ -31,6 +31,7 @@ export interface AgentServiceResponse {
   }
   status?: 'completed' | 'approval_required' | 'paused'
   orchestrationState?: {
+    runId?: string
     checkpointId?: string
     reason?: string
     requiredApprovers?: string[]
@@ -45,11 +46,19 @@ export type AgentServiceStreamEvent =
       model: string
       status?: 'completed' | 'approval_required' | 'paused'
       orchestrationState?: {
+        runId?: string
         checkpointId?: string
         reason?: string
         requiredApprovers?: string[]
       }
     }
+
+export interface AgentServiceRun {
+  ID: string
+  Status: string
+  Response?: string
+  ModelBackend?: string
+}
 
 export class AgentServiceError extends Error {
   constructor(
@@ -186,6 +195,7 @@ export async function streamFromAgentService(
         }
         case 'run.approval_requested':
           pausedState = {
+            runId: typeof data.run_id === 'string' ? data.run_id : undefined,
             checkpointId: typeof data.approval_id === 'string' ? data.approval_id : undefined,
             reason: typeof data.reason === 'string' ? data.reason : undefined,
             requiredApprovers: [],
@@ -302,6 +312,7 @@ function extractOrchestrationState(raw: unknown): AgentServiceResponse['orchestr
   if (!raw || typeof raw !== 'object') return undefined
   const value = raw as Record<string, unknown>
   return {
+    runId: typeof value.runId === 'string' ? value.runId : undefined,
     checkpointId: typeof value.checkpointId === 'string' ? value.checkpointId : undefined,
     reason: typeof value.reason === 'string' ? value.reason : undefined,
     requiredApprovers: Array.isArray(value.requiredApprovers)
@@ -334,4 +345,50 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export async function approveAgentServiceApproval(approvalId: string): Promise<void> {
+  await postApprovalDecision(approvalId, 'approve')
+}
+
+export async function denyAgentServiceApproval(approvalId: string, reason?: string): Promise<void> {
+  await postApprovalDecision(approvalId, 'deny', reason)
+}
+
+export async function fetchAgentServiceRun(runId: string): Promise<AgentServiceRun> {
+  const env = getEnv()
+  if (!env.AGENT_SERVICE_URL) {
+    throw new AgentServiceError('AGENT_SERVICE_URL is not configured: cannot fetch run state')
+  }
+
+  const res = await fetchWithTimeout(`${env.AGENT_SERVICE_URL}/runs/${runId}`, {
+    method: 'GET',
+    headers: buildHeaders('application/json'),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  return await res.json() as AgentServiceRun
+}
+
+async function postApprovalDecision(
+  approvalId: string,
+  action: 'approve' | 'deny',
+  reason?: string,
+): Promise<void> {
+  const env = getEnv()
+  if (!env.AGENT_SERVICE_URL) {
+    throw new AgentServiceError('AGENT_SERVICE_URL is not configured: cannot update approval state')
+  }
+
+  const res = await fetchWithTimeout(`${env.AGENT_SERVICE_URL}/approvals/${approvalId}/${action}`, {
+    method: 'POST',
+    headers: buildHeaders('application/json'),
+    ...(action === 'deny' ? { body: JSON.stringify({ reason }) } : {}),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
 }

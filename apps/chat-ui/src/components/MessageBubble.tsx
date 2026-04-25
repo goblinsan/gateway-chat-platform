@@ -10,10 +10,13 @@ interface MessageBubbleProps {
   ttsEnabled?: boolean
   ttsVoice?: string
   ttsActive?: boolean
+  approvalBusy?: boolean
   onCopy: () => void
   onRegenerate?: () => void
   onEditResend?: (newContent: string) => void
   onAudioStored?: (base64: string) => void
+  onApproveApproval?: () => void
+  onDenyApproval?: () => void
 }
 
 const COST_BADGE: Record<string, string> = {
@@ -92,10 +95,13 @@ const MessageBubble = React.memo(function MessageBubble({
   ttsEnabled = false,
   ttsVoice,
   ttsActive = false,
+  approvalBusy = false,
   onCopy,
   onRegenerate,
   onEditResend,
   onAudioStored,
+  onApproveApproval,
+  onDenyApproval,
 }: MessageBubbleProps) {
   const [editing, setEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
@@ -194,6 +200,10 @@ const MessageBubble = React.memo(function MessageBubble({
 
   // Assistant message
   const meta = message.meta
+  const approvalPending =
+    meta?.status === 'approval_required' &&
+    Boolean(meta.orchestrationState?.checkpointId) &&
+    Boolean(meta.orchestrationState?.runId)
   const shouldShowTtsPlayer = ttsActive && !isStreaming && Boolean(message.content)
   return (
     <div className="flex justify-start gap-3 group">
@@ -283,6 +293,32 @@ const MessageBubble = React.memo(function MessageBubble({
         )}
         {meta && !isStreaming && meta.routingExplanation && (
           <RoutingInfo explanation={meta.routingExplanation} />
+        )}
+        {approvalPending && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-amber-700/60 bg-amber-950/40 px-3 py-2">
+            <span className="text-xs text-amber-300">
+              Approval required
+            </span>
+            {meta?.orchestrationState?.reason && (
+              <span className="text-xs text-amber-200/80">
+                {meta.orchestrationState.reason}
+              </span>
+            )}
+            <button
+              onClick={onApproveApproval}
+              disabled={approvalBusy || !onApproveApproval}
+              className="px-3 py-1.5 rounded-lg bg-emerald-700 text-white text-xs hover:bg-emerald-600 disabled:opacity-50"
+            >
+              {approvalBusy ? 'Working…' : 'Approve'}
+            </button>
+            <button
+              onClick={onDenyApproval}
+              disabled={approvalBusy || !onDenyApproval}
+              className="px-3 py-1.5 rounded-lg border border-red-700 text-red-300 text-xs hover:bg-red-950/50 disabled:opacity-50"
+            >
+              Deny
+            </button>
+          </div>
         )}
       </div>
     </div>

@@ -56,6 +56,7 @@ export default function ChatPage({
   const [compareLoading, setCompareLoading] = useState(false)
   const [showHandoff, setShowHandoff] = useState(false)
   const [showPromptLibrary, setShowPromptLibrary] = useState(false)
+  const [approvalMessageId, setApprovalMessageId] = useState<string | null>(null)
   // Per-message model override: cleared after each send (Issue #95)
   const [messageModelOverride, setMessageModelOverride] = useState<string | undefined>(undefined)
   // Quota summary for the active model — refreshed after each send (Issue #98, #99)
@@ -158,6 +159,8 @@ export default function ChatPage({
                   onUpdateLastAssistantMessage(threadId, accumulated)
                 }
                 onUpdateLastAssistantMessage(threadId, accumulated, {
+                  status: event.status,
+                  orchestrationState: event.orchestrationState,
                   model: event.model,
                   usedProvider: event.usedProvider,
                   latencyMs: event.latencyMs,
@@ -310,6 +313,71 @@ export default function ChatPage({
       setCompareLoading(false)
     }
   }, [input, isStreaming])
+
+  const handleApprovalDecision = useCallback(
+    async (messageId: string, decision: 'approve' | 'deny'): Promise<void> => {
+      if (!activeThreadId || !activeThread) return
+      const target = activeThread.messages.find((message) => message.id === messageId)
+      const checkpointId = target?.meta?.orchestrationState?.checkpointId
+      const runId = target?.meta?.orchestrationState?.runId
+      if (!target || !checkpointId || !runId) return
+
+      setApprovalMessageId(messageId)
+      try {
+        const reason = decision === 'deny'
+          ? window.prompt('Optional denial reason:', 'Denied in chat UI') ?? 'Denied in chat UI'
+          : undefined
+
+        const response = await fetch(`/api/orchestrations/approvals/${checkpointId}/${decision}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runId, ...(decision === 'deny' ? { reason } : {}) }),
+        })
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+
+        const result = await response.json() as {
+          status: string
+          content?: string
+          model?: string
+        }
+
+        onSetThreadMessages(
+          activeThreadId,
+          activeThread.messages.map((message) => {
+            if (message.id !== messageId) return message
+            const nextContent =
+              result.status === 'completed'
+                ? (result.content || message.content || 'Approved.')
+                : (decision === 'deny' ? '⛔ Approval denied.' : message.content)
+            return {
+              ...message,
+              content: nextContent,
+              meta: {
+                ...message.meta,
+                status: result.status === 'completed' ? 'approved' : 'denied',
+                orchestrationState: undefined,
+                ...(result.model ? { model: result.model } : {}),
+                usedProvider: 'agent-service',
+              },
+            }
+          }),
+        )
+      } catch (err) {
+        const nextContent = err instanceof Error ? `⚠️ ${err.message}` : '⚠️ Approval update failed'
+        onSetThreadMessages(
+          activeThreadId,
+          activeThread.messages.map((message) =>
+            message.id === messageId ? { ...message, content: nextContent } : message,
+          ),
+        )
+      } finally {
+        setApprovalMessageId(null)
+      }
+    },
+    [activeThread, activeThreadId, onSetThreadMessages],
+  )
 
   const handleHandoffConfirm = useCallback(async (toAgentId: string): Promise<void> => {
     if (!activeThreadId || !activeAgentId) return
@@ -465,6 +533,17 @@ export default function ChatPage({
             onAudioStored={
               msg.role === 'assistant' && activeThreadId
                 ? (base64) => onUpdateMessageTtsAudio(activeThreadId, msg.id, base64)
+                : undefined
+            }
+            approvalBusy={approvalMessageId === msg.id}
+            onApproveApproval={
+              msg.role === 'assistant'
+                ? () => { void handleApprovalDecision(msg.id, 'approve') }
+                : undefined
+            }
+            onDenyApproval={
+              msg.role === 'assistant'
+                ? () => { void handleApprovalDecision(msg.id, 'deny') }
                 : undefined
             }
           />
