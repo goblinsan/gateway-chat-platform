@@ -331,7 +331,16 @@ export default function ChatPage({
         const response = await fetch(`/api/orchestrations/approvals/${checkpointId}/${decision}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runId, ...(decision === 'deny' ? { reason } : {}) }),
+          body: JSON.stringify({
+            runId,
+            threadId: activeThreadId,
+            agentId: activeAgentId,
+            userMessage: [...activeThread.messages].reverse().find((message) => message.role === 'user')?.content,
+            assistantMessageId: messageId,
+            threadTitle: activeThread.title,
+            defaultModel: activeThread.defaultModel,
+            ...(decision === 'deny' ? { reason } : {}),
+          }),
         })
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`)
@@ -376,7 +385,7 @@ export default function ChatPage({
         setApprovalMessageId(null)
       }
     },
-    [activeThread, activeThreadId, onSetThreadMessages],
+    [activeAgentId, activeThread, activeThreadId, onSetThreadMessages],
   )
 
   const handleHandoffConfirm = useCallback(async (toAgentId: string): Promise<void> => {
