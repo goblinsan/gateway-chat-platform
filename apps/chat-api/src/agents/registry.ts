@@ -13,6 +13,7 @@ function parseJsonField<T>(raw: string | null): T | undefined {
 }
 
 function dbRowToConfig(row: PrismaAgent): AgentConfig {
+  const rowWithExecutionMode = row as PrismaAgent & { executionMode?: string | null }
   return {
     id: row.id,
     name: row.name,
@@ -29,7 +30,7 @@ function dbRowToConfig(row: PrismaAgent): AgentConfig {
     routingPolicy: parseJsonField<RoutingPolicy>(row.routingPolicy),
     endpointConfig: parseJsonField<ModelEndpointConfig>(row.endpointConfig),
     contextSources: parseJsonField<ContextSource[]>(row.contextSources),
-    executionMode: (row.executionMode as ExecutionMode) || undefined,
+    executionMode: (rowWithExecutionMode.executionMode as ExecutionMode | undefined) || undefined,
     enabled: row.enabled,
     source: 'database',
   }

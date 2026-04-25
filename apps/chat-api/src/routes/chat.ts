@@ -12,7 +12,7 @@ import { checkQuota } from '../services/quotaService'
 import { resolveProviderChain, estimatePromptTokens } from '../routing'
 import { getBuiltInTools, dispatchTool } from '../tools/registry'
 import { syncAgentConversationToNotes } from '../services/notesSync'
-import { sendToAgentService } from '../services/agentServiceClient'
+import { sendToAgentService, streamFromAgentService } from '../services/agentServiceClient'
 
 /**
  * Resolve an agent config for chat.
@@ -405,6 +405,8 @@ export default async function chatRoutes(app: FastifyInstance) {
       let usageData: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
       let accumulatedContent = ''
       let streamedModel: string | undefined
+      let orchestratedStatus: 'completed' | 'approval_required' | 'paused' | undefined
+      let orchestrationState: AgentStreamDoneEvent['orchestrationState']
 
       const writeEvent = (payload: object): boolean => {
         if (reply.raw.destroyed) return false
@@ -418,24 +420,35 @@ export default async function chatRoutes(app: FastifyInstance) {
         let usedProvider: string
 
         if (agent.executionMode === 'orchestrated') {
-          const agentServiceResult = await sendToAgentService({
+          const agentServiceResult = await streamFromAgentService({
             agentId,
             model: resolvedModel,
             messages: providerMessages,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
             modelParams: agent.endpointConfig?.modelParams,
+            threadId,
+          }, (event) => {
+            if (event.type === 'token') {
+              accumulatedContent += event.token
+              writeEvent({ type: 'token', token: event.token })
+              return
+            }
+            streamedModel = event.model
+            orchestratedStatus = event.status
+            orchestrationState = event.orchestrationState
           })
           usedProvider = agentServiceResult.usedProvider
           streamedModel = agentServiceResult.model
           if (agentServiceResult.usage) {
             usageData = agentServiceResult.usage
           }
-          // NOTE: The internal agent-service does not yet support token-level streaming.
-          // The full response is translated into a single token SSE event so that the
-          // UI SSE contract is honoured without exposing orchestrator internals.
-          accumulatedContent = agentServiceResult.message.content
-          writeEvent({ type: 'token', token: accumulatedContent })
+          orchestratedStatus = agentServiceResult.status ?? orchestratedStatus
+          orchestrationState = agentServiceResult.orchestrationState ?? orchestrationState
+          if (!accumulatedContent && agentServiceResult.message.content) {
+            accumulatedContent = agentServiceResult.message.content
+            writeEvent({ type: 'token', token: accumulatedContent })
+          }
         } else {
           usedProvider = await registry.streamChatWithChain(
             decision.orderedChain,
@@ -469,13 +482,15 @@ export default async function chatRoutes(app: FastifyInstance) {
           latencyMs,
           ...(usageData ? { usage: usageData } : {}),
           routingExplanation,
+          ...(orchestratedStatus ? { status: orchestratedStatus } : {}),
+          ...(orchestrationState ? { orchestrationState } : {}),
         }
         writeEvent(donePayload)
 
         // Persist conversation data asynchronously (Issues #111, #112).
         // The gateway remains the owner of thread/message persistence, usage logs,
         // and notes sync regardless of whether execution was delegated to agent-service.
-        if (threadId) {
+        if (threadId && orchestratedStatus !== 'approval_required' && orchestratedStatus !== 'paused') {
           const estimatedCostUsd = usageData
             ? estimateCostUsd(effectiveModel, usageData.promptTokens, usageData.completionTokens)
             : 0

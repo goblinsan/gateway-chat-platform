@@ -11,7 +11,7 @@ vi.mock('../config/env', () => ({
   getEnv: () => mockEnv,
 }))
 
-import { sendToAgentService, AgentServiceError } from '../services/agentServiceClient'
+import { sendToAgentService, streamFromAgentService, AgentServiceError } from '../services/agentServiceClient'
 
 const MOCK_REQUEST = {
   agentId: 'local-analyst',
@@ -186,6 +186,62 @@ describe('sendToAgentService', () => {
     expect(body.response_mode).toBe('sync')
     expect(result.message.content).toBe('Automation complete.')
     expect(result.usedProvider).toBe('agent-service')
+  })
+
+  it('maps paused automation responses with orchestration state', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        run_id: 'run-2',
+        status: 'approval_required',
+        output: '',
+        model_backend: 'local-model',
+        orchestration_state: {
+          checkpointId: 'approval-1',
+          reason: 'Needs approval',
+        },
+      }),
+    })
+
+    const result = await sendToAgentService({
+      ...MOCK_REQUEST,
+      workflowId: 'wf-approval',
+      workflowSource: 'scheduler',
+      deliveryMode: 'inbox',
+    })
+
+    expect(result.status).toBe('approval_required')
+    expect(result.orchestrationState?.checkpointId).toBe('approval-1')
+  })
+
+  it('streams assistant deltas from AGENT_SERVICE_URL/internal/chat', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode([
+            'data: {"type":"run.model_selected","data":{"backend":"local-model"}}',
+            '',
+            'data: {"type":"run.assistant_delta","data":{"delta":"Hello "}}',
+            '',
+            'data: {"type":"run.assistant_delta","data":{"delta":"world"}}',
+            '',
+            'data: {"type":"run.completed","data":{"response":"Hello world","model_backend":"local-model"}}',
+            '',
+          ].join('\n')))
+          controller.close()
+        },
+      }),
+    })
+
+    const events: Array<{ type: string; token?: string }> = []
+    const result = await streamFromAgentService(MOCK_REQUEST, (event) => {
+      events.push(event as { type: string; token?: string })
+    })
+
+    expect(events.filter((event) => event.type === 'token')).toHaveLength(2)
+    expect(result.message.content).toBe('Hello world')
+    expect(result.model).toBe('local-model')
   })
 
   it('succeeds on the second attempt after a transient server error', async () => {

@@ -151,6 +151,12 @@ export default function ChatPage({
                 accumulated += event.token
                 onUpdateLastAssistantMessage(threadId, accumulated)
               } else if (event.type === 'done') {
+                if (!accumulated && (event.status === 'approval_required' || event.status === 'paused')) {
+                  accumulated = event.orchestrationState?.reason
+                    ? `⏸ ${event.orchestrationState.reason}`
+                    : '⏸ Waiting for approval.'
+                  onUpdateLastAssistantMessage(threadId, accumulated)
+                }
                 onUpdateLastAssistantMessage(threadId, accumulated, {
                   model: event.model,
                   usedProvider: event.usedProvider,

@@ -73,6 +73,12 @@ export interface AgentStreamDoneEvent {
   latencyMs: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
   routingExplanation?: RoutingExplanation
+  status?: 'completed' | 'approval_required' | 'paused'
+  orchestrationState?: {
+    checkpointId?: string
+    reason?: string
+    requiredApprovers?: string[]
+  }
 }
 
 export interface CompareRequest {

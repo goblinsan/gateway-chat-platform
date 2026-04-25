@@ -1,13 +1,3 @@
-/**
- * Internal agent-service client (Issue #107).
- *
- * Forwards orchestrated chat requests to the internal agent-service with:
- * - Stable service-to-service authentication via a pre-shared API key.
- * - Configurable request timeout (AGENT_SERVICE_TIMEOUT_MS).
- * - Automatic retries with exponential back-off (AGENT_SERVICE_RETRY_COUNT).
- * - Normalized request/response payloads compatible with AgentChatResponse.
- */
-
 import type { ProviderMessage } from '@gateway/shared'
 import { getEnv } from '../config/env'
 
@@ -18,17 +8,11 @@ export interface AgentServiceRequest {
   temperature?: number
   maxTokens?: number
   modelParams?: Record<string, unknown>
-  /** Workflow identifier passed from the automation context (Issue #114). */
   workflowId?: string
-  /** Originating source passed from the automation context (Issue #114). */
   workflowSource?: string
-  /** Delivery mode requested by the caller (Issue #114). */
   deliveryMode?: string
-  /** Target user for inbox/channel delivery (Issue #114). */
   userId?: string
-  /** Target channel for inbox/channel delivery (Issue #114). */
   channelId?: string
-  /** Thread identifier for conversation attribution (Issue #114). */
   threadId?: string
 }
 
@@ -45,27 +29,27 @@ export interface AgentServiceResponse {
     completionTokens: number
     totalTokens: number
   }
-  /**
-   * Orchestration status returned by the agent-service (Issue #115).
-   * Absent or `'completed'` means normal completion.
-   * `'approval_required'` and `'paused'` indicate the run has been suspended.
-   */
   status?: 'completed' | 'approval_required' | 'paused'
-  /**
-   * Additional orchestration state detail surfaced when the run is paused
-   * or requires approval (Issue #115).
-   */
   orchestrationState?: {
     checkpointId?: string
     reason?: string
     requiredApprovers?: string[]
   }
-  /**
-   * Optional thread identifier returned by the orchestrator for inbox/chat
-   * delivery attribution (Issue #116).
-   */
   resultThreadId?: string
 }
+
+export type AgentServiceStreamEvent =
+  | { type: 'token'; token: string }
+  | {
+      type: 'done'
+      model: string
+      status?: 'completed' | 'approval_required' | 'paused'
+      orchestrationState?: {
+        checkpointId?: string
+        reason?: string
+        requiredApprovers?: string[]
+      }
+    }
 
 export class AgentServiceError extends Error {
   constructor(
@@ -77,13 +61,8 @@ export class AgentServiceError extends Error {
   }
 }
 
-/** Initial back-off duration in milliseconds for the first retry. Subsequent retries double this value. */
 const INITIAL_BACKOFF_MS = 200
 
-/**
- * Send a chat request to the internal agent-service.
- * Throws `AgentServiceError` on unrecoverable failure after all retries.
- */
 export async function sendToAgentService(
   request: AgentServiceRequest,
 ): Promise<AgentServiceResponse> {
@@ -95,75 +74,27 @@ export async function sendToAgentService(
     )
   }
 
-  const isAutomationRequest = Boolean(
-    request.workflowId || request.workflowSource || request.deliveryMode || request.userId || request.channelId,
-  )
+  const isAutomationRequest = isAutomation(request)
   const url = isAutomationRequest
     ? `${env.AGENT_SERVICE_URL}/internal/automation`
     : `${env.AGENT_SERVICE_URL}/internal/chat`
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
-  }
-  if (env.AGENT_SERVICE_API_KEY) {
-    headers['Authorization'] = `Bearer ${env.AGENT_SERVICE_API_KEY}`
-  }
-
-  const body = JSON.stringify(
-    isAutomationRequest
-      ? {
-          source: request.workflowSource ?? 'gateway-chat-platform',
-          job_type: request.workflowId ? 'gateway_workflow' : 'gateway_automation',
-          workflow_id: request.workflowId,
-          prompt: request.messages.filter((message) => message.role === 'user').at(-1)?.content ?? '',
-          messages: request.messages,
-          model_preferences: {
-            preferred: request.model,
-            ...(typeof request.maxTokens === 'number' ? { max_tokens: request.maxTokens } : {}),
-          },
-          response_mode: 'sync',
-          metadata: {
-            ...(request.deliveryMode ? { delivery_mode: request.deliveryMode } : {}),
-            ...(request.userId ? { user_id: request.userId } : {}),
-            ...(request.channelId ? { channel_id: request.channelId } : {}),
-            ...(request.threadId ? { thread_id: request.threadId } : {}),
-          },
-        }
-      : {
-          request_id: request.threadId ?? request.agentId,
-          thread_id: request.threadId,
-          user_id: request.userId,
-          agent_id: request.agentId,
-          messages: request.messages,
-          model_preferences: {
-            preferred: request.model,
-            ...(typeof request.maxTokens === 'number' ? { max_tokens: request.maxTokens } : {}),
-          },
-        },
-  )
-  const timeoutMs = env.AGENT_SERVICE_TIMEOUT_MS
+  const headers = buildHeaders('application/json')
+  const body = JSON.stringify(buildRequestBody(request, isAutomationRequest, 'sync'))
   const maxAttempts = Math.max(1, env.AGENT_SERVICE_RETRY_COUNT + 1)
 
   let lastError: Error = new AgentServiceError('No attempts made')
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers,
         body,
-        signal: controller.signal,
       })
 
       if (!res.ok) {
         const text = await res.text().catch(() => '')
-        throw new AgentServiceError(
-          `agent-service returned ${res.status}: ${text}`,
-          res.status,
-        )
+        throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
       }
 
       const data = await res.json() as Record<string, unknown>
@@ -176,28 +107,229 @@ export async function sendToAgentService(
             role: 'assistant',
             content: String(data.output ?? ''),
           },
+          status: normalizeStatus(data.status),
+          orchestrationState: extractOrchestrationState(data.orchestration_state),
           ...(request.threadId ? { resultThreadId: request.threadId } : {}),
         }
       }
-      return data as AgentServiceResponse
+      return data as unknown as AgentServiceResponse
     } catch (err) {
       lastError = err instanceof Error ? err : new AgentServiceError(String(err))
-
-      // Do not retry on client-side errors (4xx) — they won't succeed on retry
       if (err instanceof AgentServiceError && err.statusCode && err.statusCode < 500) {
         throw err
       }
-
       if (attempt < maxAttempts) {
-        // Exponential back-off: INITIAL_BACKOFF_MS, 2×, 4×, …
         await sleep(INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
       }
-    } finally {
-      clearTimeout(timer)
     }
   }
 
   throw lastError
+}
+
+export async function streamFromAgentService(
+  request: AgentServiceRequest,
+  onEvent: (event: AgentServiceStreamEvent) => void,
+): Promise<AgentServiceResponse> {
+  const env = getEnv()
+
+  if (!env.AGENT_SERVICE_URL) {
+    throw new AgentServiceError(
+      'AGENT_SERVICE_URL is not configured: cannot route request to agent-service',
+    )
+  }
+
+  const url = `${env.AGENT_SERVICE_URL}/internal/chat`
+  const headers = buildHeaders('text/event-stream')
+  const body = JSON.stringify(buildRequestBody(request, false, 'stream'))
+  const res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers,
+    body,
+  })
+
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let content = ''
+  let selectedModel = request.model
+  let pausedState: AgentServiceResponse['orchestrationState']
+  let status: AgentServiceResponse['status']
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const payload = JSON.parse(line.slice(6)) as { type?: string; data?: Record<string, unknown> }
+      const data = payload.data ?? {}
+
+      switch (payload.type) {
+        case 'run.model_selected':
+          selectedModel = String(data.backend ?? selectedModel)
+          break
+        case 'run.assistant_delta': {
+          const token = String(data.delta ?? '')
+          if (!token) break
+          content += token
+          onEvent({ type: 'token', token })
+          break
+        }
+        case 'run.approval_requested':
+          pausedState = {
+            checkpointId: typeof data.approval_id === 'string' ? data.approval_id : undefined,
+            reason: typeof data.reason === 'string' ? data.reason : undefined,
+            requiredApprovers: [],
+          }
+          break
+        case 'run.paused':
+          status = 'approval_required'
+          onEvent({
+            type: 'done',
+            model: selectedModel,
+            status,
+            orchestrationState: pausedState,
+          })
+          await reader.cancel().catch(() => undefined)
+          return {
+            agentId: request.agentId,
+            usedProvider: 'agent-service',
+            model: selectedModel,
+            message: { role: 'assistant', content },
+            status,
+            orchestrationState: pausedState,
+            ...(request.threadId ? { resultThreadId: request.threadId } : {}),
+          }
+        case 'run.completed':
+          selectedModel = String(data.model_backend ?? selectedModel)
+          if (!content && typeof data.response === 'string') {
+            content = data.response
+          }
+          onEvent({ type: 'done', model: selectedModel, status: 'completed' })
+          return {
+            agentId: request.agentId,
+            usedProvider: 'agent-service',
+            model: selectedModel,
+            message: { role: 'assistant', content },
+            status: 'completed',
+            ...(request.threadId ? { resultThreadId: request.threadId } : {}),
+          }
+        case 'run.failed':
+          throw new AgentServiceError(String(data.error ?? 'agent-service run failed'))
+      }
+    }
+  }
+
+  onEvent({ type: 'done', model: selectedModel, status: status ?? 'completed', orchestrationState: pausedState })
+  return {
+    agentId: request.agentId,
+    usedProvider: 'agent-service',
+    model: selectedModel,
+    message: { role: 'assistant', content },
+    status: status ?? 'completed',
+    orchestrationState: pausedState,
+    ...(request.threadId ? { resultThreadId: request.threadId } : {}),
+  }
+}
+
+function isAutomation(request: AgentServiceRequest): boolean {
+  return Boolean(
+    request.workflowId || request.workflowSource || request.deliveryMode || request.userId || request.channelId,
+  )
+}
+
+function buildHeaders(accept: string): Record<string, string> {
+  const env = getEnv()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: accept,
+  }
+  if (env.AGENT_SERVICE_API_KEY) {
+    headers.Authorization = `Bearer ${env.AGENT_SERVICE_API_KEY}`
+  }
+  return headers
+}
+
+function buildRequestBody(
+  request: AgentServiceRequest,
+  isAutomationRequest: boolean,
+  responseMode: 'sync' | 'stream',
+): Record<string, unknown> {
+  if (isAutomationRequest) {
+    return {
+      source: request.workflowSource ?? 'gateway-chat-platform',
+      job_type: request.workflowId ? 'gateway_workflow' : 'gateway_automation',
+      workflow_id: request.workflowId,
+      prompt: request.messages.filter((message) => message.role === 'user').at(-1)?.content ?? '',
+      messages: request.messages,
+      model_preferences: {
+        preferred: request.model,
+        ...(typeof request.maxTokens === 'number' ? { max_tokens: request.maxTokens } : {}),
+      },
+      response_mode: responseMode,
+      metadata: {
+        ...(request.deliveryMode ? { delivery_mode: request.deliveryMode } : {}),
+        ...(request.userId ? { user_id: request.userId } : {}),
+        ...(request.channelId ? { channel_id: request.channelId } : {}),
+        ...(request.threadId ? { thread_id: request.threadId } : {}),
+      },
+    }
+  }
+
+  return {
+    request_id: request.threadId ?? request.agentId,
+    thread_id: request.threadId,
+    user_id: request.userId,
+    agent_id: request.agentId,
+    messages: request.messages,
+    model_preferences: {
+      preferred: request.model,
+      ...(typeof request.maxTokens === 'number' ? { max_tokens: request.maxTokens } : {}),
+    },
+  }
+}
+
+function extractOrchestrationState(raw: unknown): AgentServiceResponse['orchestrationState'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const value = raw as Record<string, unknown>
+  return {
+    checkpointId: typeof value.checkpointId === 'string' ? value.checkpointId : undefined,
+    reason: typeof value.reason === 'string' ? value.reason : undefined,
+    requiredApprovers: Array.isArray(value.requiredApprovers)
+      ? value.requiredApprovers.filter((entry): entry is string => typeof entry === 'string')
+      : undefined,
+  }
+}
+
+function normalizeStatus(raw: unknown): AgentServiceResponse['status'] | undefined {
+  if (raw === 'completed' || raw === 'approval_required' || raw === 'paused') {
+    return raw
+  }
+  return undefined
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const env = getEnv()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), env.AGENT_SERVICE_TIMEOUT_MS)
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function sleep(ms: number): Promise<void> {

@@ -106,8 +106,25 @@ const mockSendToAgentService = vi.fn().mockResolvedValue({
   usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
 })
 
+const mockStreamFromAgentService = vi.fn().mockImplementation(
+  async (_request: unknown, onEvent: (event: { type: 'token' | 'done'; token?: string; model?: string; status?: string; orchestrationState?: unknown }) => void) => {
+    onEvent({ type: 'token', token: 'Orchestrated ' })
+    onEvent({ type: 'token', token: 'response.' })
+    onEvent({ type: 'done', model: 'local-model', status: 'completed' })
+    return {
+      agentId: 'orchestrated-agent',
+      usedProvider: 'agent-service',
+      model: 'local-model',
+      message: { role: 'assistant', content: 'Orchestrated response.' },
+      usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
+      status: 'completed',
+    }
+  },
+)
+
 vi.mock('../services/agentServiceClient', () => ({
   sendToAgentService: (...args: unknown[]) => mockSendToAgentService(...args),
+  streamFromAgentService: (...args: unknown[]) => mockStreamFromAgentService(...args),
   AgentServiceError: class AgentServiceError extends Error {
     constructor(msg: string) { super(msg); this.name = 'AgentServiceError' }
   },
@@ -168,6 +185,21 @@ beforeEach(() => {
     message: { role: 'assistant', content: 'Orchestrated response.' },
     usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
   })
+  mockStreamFromAgentService.mockImplementation(
+    async (_request: unknown, onEvent: (event: { type: 'token' | 'done'; token?: string; model?: string; status?: string; orchestrationState?: unknown }) => void) => {
+      onEvent({ type: 'token', token: 'Orchestrated ' })
+      onEvent({ type: 'token', token: 'response.' })
+      onEvent({ type: 'done', model: 'local-model', status: 'completed' })
+      return {
+        agentId: 'orchestrated-agent',
+        usedProvider: 'agent-service',
+        model: 'local-model',
+        message: { role: 'assistant', content: 'Orchestrated response.' },
+        usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
+        status: 'completed',
+      }
+    },
+  )
 })
 
 describe('POST /api/chat — execution-mode routing', () => {
@@ -392,7 +424,7 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
       .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>)
   }
 
-  it('emits orchestrated response as a single SSE token event', async () => {
+  it('emits orchestrated SSE token events from the agent-service stream', async () => {
     const app = Fastify()
     await app.register(chatRoutes, { prefix: '/api' })
 
@@ -408,8 +440,8 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
     expect(res.statusCode).toBe(200)
     const events = parseSseEvents(res.payload)
     const tokenEvents = events.filter((e) => e.type === 'token')
-    expect(tokenEvents).toHaveLength(1)
-    expect(tokenEvents[0].token).toBe('Orchestrated response.')
+    expect(tokenEvents).toHaveLength(2)
+    expect(tokenEvents.map((event) => event.token).join('')).toBe('Orchestrated response.')
   })
 
   it('emits a done event after the orchestrated response', async () => {
@@ -430,6 +462,55 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
     const doneEvents = events.filter((e) => e.type === 'done')
     expect(doneEvents).toHaveLength(1)
     expect(doneEvents[0].usedProvider).toBe('agent-service')
+  })
+
+  it('surfaces paused orchestrated runs in the done event without persisting a partial assistant turn', async () => {
+    mockStreamFromAgentService.mockImplementationOnce(
+      async (_request: unknown, onEvent: (event: { type: 'token' | 'done'; token?: string; model?: string; status?: string; orchestrationState?: unknown }) => void) => {
+        onEvent({
+          type: 'done',
+          model: 'local-model',
+          status: 'approval_required',
+          orchestrationState: {
+            checkpointId: 'approval-1',
+            reason: 'Action requires approval',
+          },
+        })
+        return {
+          agentId: 'orchestrated-agent',
+          usedProvider: 'agent-service',
+          model: 'local-model',
+          message: { role: 'assistant', content: '' },
+          status: 'approval_required',
+          orchestrationState: {
+            checkpointId: 'approval-1',
+            reason: 'Action requires approval',
+          },
+        }
+      },
+    )
+
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat/stream',
+      payload: {
+        agentId: 'orchestrated-agent',
+        threadId: 'paused-thread-1',
+        messages: [{ role: 'user', content: 'Do the protected action.' }],
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const events = parseSseEvents(res.payload)
+    const doneEvents = events.filter((event) => event.type === 'done')
+    expect(doneEvents).toHaveLength(1)
+    expect(doneEvents[0].status).toBe('approval_required')
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(mockPersistMessage).not.toHaveBeenCalled()
   })
 
   it('persists user and assistant messages for orchestrated streaming runs', async () => {
@@ -539,13 +620,21 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
   })
 
   it('calls syncAgentConversationToNotes after orchestrated streaming run when notes sync is configured', async () => {
-    mockSendToAgentService.mockResolvedValueOnce({
-      agentId: 'orchestrated-notes-agent',
-      usedProvider: 'agent-service',
-      model: 'local-model',
-      message: { role: 'assistant', content: 'Notes response.' },
-      usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
-    })
+    mockStreamFromAgentService.mockImplementationOnce(
+      async (_request: unknown, onEvent: (event: { type: 'token' | 'done'; token?: string; model?: string; status?: string }) => void) => {
+        onEvent({ type: 'token', token: 'Notes ' })
+        onEvent({ type: 'token', token: 'response.' })
+        onEvent({ type: 'done', model: 'local-model', status: 'completed' })
+        return {
+          agentId: 'orchestrated-notes-agent',
+          usedProvider: 'agent-service',
+          model: 'local-model',
+          message: { role: 'assistant', content: 'Notes response.' },
+          usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
+          status: 'completed',
+        }
+      },
+    )
 
     const app = Fastify()
     await app.register(chatRoutes, { prefix: '/api' })
@@ -574,7 +663,7 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
   })
 
   it('emits an error SSE event when agent-service times out during a streaming request', async () => {
-    mockSendToAgentService.mockRejectedValueOnce(
+    mockStreamFromAgentService.mockRejectedValueOnce(
       Object.assign(new Error('The operation was aborted due to timeout'), { name: 'AbortError' }),
     )
 
@@ -600,7 +689,7 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
   })
 
   it('direct_provider streaming is unaffected when agent-service is unavailable', async () => {
-    mockSendToAgentService.mockRejectedValue(new Error('Connection refused'))
+    mockStreamFromAgentService.mockRejectedValue(new Error('Connection refused'))
 
     const app = Fastify()
     await app.register(chatRoutes, { prefix: '/api' })
@@ -616,7 +705,7 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
 
     // Direct-provider streaming must succeed regardless of agent-service state.
     expect(res.statusCode).toBe(200)
-    expect(mockSendToAgentService).not.toHaveBeenCalled()
+    expect(mockStreamFromAgentService).not.toHaveBeenCalled()
     expect(MOCK_REGISTRY.streamChatWithChain).toHaveBeenCalledOnce()
   })
 })
