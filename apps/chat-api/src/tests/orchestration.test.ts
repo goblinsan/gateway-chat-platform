@@ -7,6 +7,7 @@ const mockDenyAgentServiceApproval = vi.fn()
 const mockFetchAgentServiceRun = vi.fn()
 const mockUpsertConversation = vi.fn()
 const mockPersistMessage = vi.fn()
+const mockPersistUsageLog = vi.fn()
 const mockSyncAgentConversationToNotes = vi.fn()
 const mockGetAgent = vi.fn()
 const mockPrisma = {
@@ -24,6 +25,7 @@ vi.mock('../services/agentServiceClient', () => ({
 vi.mock('../services/persistence', () => ({
   upsertConversation: (...args: unknown[]) => mockUpsertConversation(...args),
   persistMessage: (...args: unknown[]) => mockPersistMessage(...args),
+  persistUsageLog: (...args: unknown[]) => mockPersistUsageLog(...args),
 }))
 
 vi.mock('../services/notesSync', () => ({
@@ -51,6 +53,7 @@ describe('orchestration approval routes', () => {
       Status: 'completed',
       Response: 'Approved result.',
       ModelBackend: 'local-model',
+      Usage: { PromptTokens: 21, CompletionTokens: 9, TotalTokens: 30 },
     })
 
     const app = Fastify()
@@ -68,6 +71,7 @@ describe('orchestration approval routes', () => {
     const body = JSON.parse(res.payload)
     expect(body.content).toBe('Approved result.')
     expect(body.status).toBe('completed')
+    expect(body.usage).toEqual({ promptTokens: 21, completionTokens: 9, totalTokens: 30 })
   })
 
   it('denies an orchestration and returns the settled run result', async () => {
@@ -118,6 +122,7 @@ describe('orchestration approval routes', () => {
       Status: 'completed',
       Response: 'Resumed assistant reply.',
       ModelBackend: 'local-model',
+      Usage: { PromptTokens: 18, CompletionTokens: 7, TotalTokens: 25 },
     })
     mockGetAgent.mockReturnValue({
       id: 'coach-agent',
@@ -169,6 +174,19 @@ describe('orchestration approval routes', () => {
         threadId: 'thread-3',
         userMessage: 'Please continue.',
         assistantMessage: 'Resumed assistant reply.',
+      }),
+    )
+    expect(mockPersistUsageLog).toHaveBeenCalledWith(
+      mockPrisma,
+      expect.objectContaining({
+        userId: 'me',
+        conversationId: 'thread-3',
+        agentId: 'coach-agent',
+        provider: 'agent-service',
+        model: 'local-model',
+        promptTokens: 18,
+        completionTokens: 7,
+        totalTokens: 25,
       }),
     )
   })

@@ -4,7 +4,8 @@ import type { AgentConfig } from '@gateway/shared'
 import type { PrismaClient } from '@prisma/client'
 import { getAgent } from '../agents/registry'
 import { getPrismaClient } from '../services/db'
-import { upsertConversation, persistMessage } from '../services/persistence'
+import { estimateCostUsd } from '../services/costEstimator'
+import { upsertConversation, persistMessage, persistUsageLog } from '../services/persistence'
 import { syncAgentConversationToNotes } from '../services/notesSync'
 import {
   approveAgentServiceApproval,
@@ -79,6 +80,7 @@ export default async function orchestrationRoutes(app: FastifyInstance) {
           status: run.Status,
           content: run.Response ?? '',
           model: run.ModelBackend,
+          usage: normalizeUsage(run),
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to approve orchestration'
@@ -116,6 +118,7 @@ export default async function orchestrationRoutes(app: FastifyInstance) {
           status: run.Status,
           content: run.Response ?? '',
           model: run.ModelBackend,
+          usage: normalizeUsage(run),
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to deny orchestration'
@@ -174,6 +177,26 @@ async function persistResolvedRun(input: {
     provider: 'agent-service',
   })
 
+  const usage = normalizeUsage(input.run)
+  if (usage && input.run.ModelBackend) {
+    await persistUsageLog(prisma, {
+      userId: input.userId,
+      conversationId: input.threadId,
+      agentId: input.agentId,
+      provider: 'agent-service',
+      model: input.run.ModelBackend,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      totalTokens: usage.totalTokens,
+      estimatedCostUsd: estimateCostUsd(
+        input.run.ModelBackend,
+        usage.promptTokens,
+        usage.completionTokens,
+      ),
+      latencyMs: 0,
+    })
+  }
+
   const agent = await resolveAgentForPersistence(input.agentId, input.userId, prisma)
   if (agent && input.userMessage?.trim()) {
     await syncAgentConversationToNotes(agent, {
@@ -182,6 +205,22 @@ async function persistResolvedRun(input: {
       userMessage: input.userMessage,
       assistantMessage: input.run.Response,
     })
+  }
+}
+
+function normalizeUsage(
+  run: Awaited<ReturnType<typeof fetchAgentServiceRun>>,
+): { promptTokens: number; completionTokens: number; totalTokens: number } | null {
+  const promptTokens = run.Usage?.PromptTokens ?? 0
+  const completionTokens = run.Usage?.CompletionTokens ?? 0
+  const totalTokens = run.Usage?.TotalTokens ?? 0
+  if (promptTokens <= 0 && completionTokens <= 0 && totalTokens <= 0) {
+    return null
+  }
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: totalTokens > 0 ? totalTokens : promptTokens + completionTokens,
   }
 }
 

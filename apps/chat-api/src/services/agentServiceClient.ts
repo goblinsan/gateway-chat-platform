@@ -58,6 +58,11 @@ export interface AgentServiceRun {
   Status: string
   Response?: string
   ModelBackend?: string
+  Usage?: {
+    PromptTokens?: number
+    CompletionTokens?: number
+    TotalTokens?: number
+  }
 }
 
 export class AgentServiceError extends Error {
