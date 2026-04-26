@@ -165,7 +165,13 @@ describe('sendToAgentService', () => {
   it('routes automation requests to AGENT_SERVICE_URL/internal/automation with normalized body', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ run_id: 'run-1', status: 'completed', output: 'Automation complete.', model_backend: 'local-model' }),
+      json: async () => ({
+        run_id: 'run-1',
+        status: 'completed',
+        output: 'Automation complete.',
+        model_backend: 'local-model',
+        usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 },
+      }),
     })
 
     const result = await sendToAgentService({
@@ -183,9 +189,14 @@ describe('sendToAgentService', () => {
     const body = JSON.parse(init.body as string) as Record<string, unknown>
     expect(body.source).toBe('scheduler')
     expect(body.job_type).toBe('gateway_workflow')
+    expect(body.request_id).toBe('thread-1')
+    expect(body.thread_id).toBe('thread-1')
+    expect(body.user_id).toBe('me')
+    expect(body.agent_id).toBe('local-analyst')
     expect(body.response_mode).toBe('sync')
     expect(result.message.content).toBe('Automation complete.')
     expect(result.usedProvider).toBe('agent-service')
+    expect(result.usage?.totalTokens).toBe(20)
   })
 
   it('maps paused automation responses with orchestration state', async () => {
@@ -199,6 +210,8 @@ describe('sendToAgentService', () => {
         orchestration_state: {
           checkpointId: 'approval-1',
           reason: 'Needs approval',
+          toolName: 'file',
+          toolParams: { path: '/tmp/out.txt' },
         },
       }),
     })
@@ -212,6 +225,8 @@ describe('sendToAgentService', () => {
 
     expect(result.status).toBe('approval_required')
     expect(result.orchestrationState?.checkpointId).toBe('approval-1')
+    expect(result.orchestrationState?.toolName).toBe('file')
+    expect(result.orchestrationState?.toolParams).toEqual({ path: '/tmp/out.txt' })
   })
 
   it('streams assistant deltas from AGENT_SERVICE_URL/internal/chat', async () => {
@@ -242,6 +257,30 @@ describe('sendToAgentService', () => {
     expect(events.filter((event) => event.type === 'token')).toHaveLength(2)
     expect(result.message.content).toBe('Hello world')
     expect(result.model).toBe('local-model')
+  })
+
+  it('captures approval details from streamed approval events', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode([
+            'data: {"type":"run.approval_requested","data":{"run_id":"run-9","approval_id":"appr-9","tool_name":"http","params":{"url":"https://example.com"},"reason":"Needs review"}}',
+            '',
+            'data: {"type":"run.paused","data":{"id":"run-9"}}',
+            '',
+          ].join('\n')))
+          controller.close()
+        },
+      }),
+    })
+
+    const result = await streamFromAgentService(MOCK_REQUEST, () => undefined)
+
+    expect(result.status).toBe('approval_required')
+    expect(result.orchestrationState?.checkpointId).toBe('appr-9')
+    expect(result.orchestrationState?.toolName).toBe('http')
+    expect(result.orchestrationState?.toolParams).toEqual({ url: 'https://example.com' })
   })
 
   it('succeeds on the second attempt after a transient server error', async () => {

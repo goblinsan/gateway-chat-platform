@@ -35,6 +35,8 @@ export interface AgentServiceResponse {
     checkpointId?: string
     reason?: string
     requiredApprovers?: string[]
+    toolName?: string
+    toolParams?: Record<string, unknown>
   }
   resultThreadId?: string
 }
@@ -50,6 +52,8 @@ export type AgentServiceStreamEvent =
         checkpointId?: string
         reason?: string
         requiredApprovers?: string[]
+        toolName?: string
+        toolParams?: Record<string, unknown>
       }
     }
 
@@ -121,6 +125,7 @@ export async function sendToAgentService(
             role: 'assistant',
             content: String(data.output ?? ''),
           },
+          usage: normalizeAutomationUsage(data.usage),
           status: normalizeStatus(data.status),
           orchestrationState: extractOrchestrationState(data.orchestration_state),
           ...(request.threadId ? { resultThreadId: request.threadId } : {}),
@@ -204,6 +209,10 @@ export async function streamFromAgentService(
             checkpointId: typeof data.approval_id === 'string' ? data.approval_id : undefined,
             reason: typeof data.reason === 'string' ? data.reason : undefined,
             requiredApprovers: [],
+            toolName: typeof data.tool_name === 'string' ? data.tool_name : undefined,
+            toolParams: typeof data.params === 'object' && data.params !== null
+              ? data.params as Record<string, unknown>
+              : undefined,
           }
           break
         case 'run.paused':
@@ -284,6 +293,10 @@ function buildRequestBody(
       source: request.workflowSource ?? 'gateway-chat-platform',
       job_type: request.workflowId ? 'gateway_workflow' : 'gateway_automation',
       workflow_id: request.workflowId,
+      request_id: request.threadId ?? request.workflowId ?? request.agentId,
+      thread_id: request.threadId,
+      user_id: request.userId,
+      agent_id: request.agentId,
       prompt: request.messages.filter((message) => message.role === 'user').at(-1)?.content ?? '',
       messages: request.messages,
       model_preferences: {
@@ -323,6 +336,10 @@ function extractOrchestrationState(raw: unknown): AgentServiceResponse['orchestr
     requiredApprovers: Array.isArray(value.requiredApprovers)
       ? value.requiredApprovers.filter((entry): entry is string => typeof entry === 'string')
       : undefined,
+    toolName: typeof value.toolName === 'string' ? value.toolName : undefined,
+    toolParams: typeof value.toolParams === 'object' && value.toolParams !== null
+      ? value.toolParams as Record<string, unknown>
+      : undefined,
   }
 }
 
@@ -331,6 +348,26 @@ function normalizeStatus(raw: unknown): AgentServiceResponse['status'] | undefin
     return raw
   }
   return undefined
+}
+
+function normalizeAutomationUsage(raw: unknown): AgentServiceResponse['usage'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const value = raw as Record<string, unknown>
+  const promptTokens = typeof value.prompt_tokens === 'number' ? value.prompt_tokens : undefined
+  const completionTokens = typeof value.completion_tokens === 'number' ? value.completion_tokens : undefined
+  const totalTokens = typeof value.total_tokens === 'number'
+    ? value.total_tokens
+    : typeof promptTokens === 'number' && typeof completionTokens === 'number'
+      ? promptTokens + completionTokens
+      : undefined
+  if (
+    typeof promptTokens !== 'number'
+    || typeof completionTokens !== 'number'
+    || typeof totalTokens !== 'number'
+  ) {
+    return undefined
+  }
+  return { promptTokens, completionTokens, totalTokens }
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
