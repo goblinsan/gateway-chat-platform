@@ -25,6 +25,18 @@ const COST_BADGE: Record<string, string> = {
   premium: 'bg-purple-900 text-purple-300',
 }
 
+function formatToolParams(params: Record<string, unknown> | undefined): string | null {
+  if (!params) return null
+  const entries = Object.entries(params).slice(0, 3)
+  if (entries.length === 0) return null
+  return entries.map(([key, value]) => {
+    const rendered = typeof value === 'string'
+      ? value
+      : JSON.stringify(value)
+    return `${key}=${rendered}`
+  }).join(' ')
+}
+
 function RoutingInfo({ explanation }: { explanation: NonNullable<MessageMeta['routingExplanation']> }) {
   const [open, setOpen] = useState(false)
   return (
@@ -299,9 +311,19 @@ const MessageBubble = React.memo(function MessageBubble({
             <span className="text-xs text-amber-300">
               Approval required
             </span>
+            {meta?.orchestrationState?.toolName && (
+              <span className="rounded bg-amber-900/60 px-2 py-0.5 font-mono text-xs text-amber-200">
+                {meta.orchestrationState.toolName}
+              </span>
+            )}
             {meta?.orchestrationState?.reason && (
               <span className="text-xs text-amber-200/80">
                 {meta.orchestrationState.reason}
+              </span>
+            )}
+            {formatToolParams(meta?.orchestrationState?.toolParams) && (
+              <span className="w-full break-all text-[11px] text-amber-100/70">
+                {formatToolParams(meta?.orchestrationState?.toolParams) as string}
               </span>
             )}
             <button

@@ -79,6 +79,8 @@ export interface AgentStreamDoneEvent {
     checkpointId?: string
     reason?: string
     requiredApprovers?: string[]
+    toolName?: string
+    toolParams?: Record<string, unknown>
   }
 }
 
@@ -177,6 +179,8 @@ export interface AgentRunResponse {
     checkpointId?: string
     reason?: string
     requiredApprovers?: string[]
+    toolName?: string
+    toolParams?: Record<string, unknown>
   }
 }
 

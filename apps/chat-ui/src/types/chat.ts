@@ -27,6 +27,8 @@ export interface MessageMeta {
     checkpointId?: string
     reason?: string
     requiredApprovers?: string[]
+    toolName?: string
+    toolParams?: Record<string, unknown>
   }
   model?: string
   usedProvider?: string
