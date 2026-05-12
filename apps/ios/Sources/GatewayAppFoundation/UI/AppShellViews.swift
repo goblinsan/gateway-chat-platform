@@ -319,6 +319,10 @@ struct ChatView: View {
       errorMessage = GatewayChatError.missingAgent.localizedDescription
       return
     }
+    guard agents.contains(where: { $0.id == resolvedAgentID }) else {
+      errorMessage = "Selected agent is unavailable. Reload agents and try again."
+      return
+    }
 
     let userMessage = ChatMessageRow(role: .user, content: trimmedPrompt)
     messages.append(userMessage)
@@ -327,7 +331,16 @@ struct ChatView: View {
     errorMessage = nil
     defer { isSending = false }
 
-    let conversation = messages.map { GatewayConversationMessage(role: $0.role.rawValue, content: $0.content) }
+    let conversation = messages.map { message in
+      let role: String
+      switch message.role {
+      case .user:
+        role = "user"
+      case .assistant:
+        role = "assistant"
+      }
+      return GatewayConversationMessage(role: role, content: message.content)
+    }
 
     do {
       let result = try await model.chatClient.sendPrompt(
