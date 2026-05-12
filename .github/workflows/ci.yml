@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
   push:
+    # Main is validated by deploy-on-merge on the self-hosted gateway runner.
+    branches-ignore:
+      - main
 
 permissions:
   contents: read
