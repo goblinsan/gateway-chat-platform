@@ -20,11 +20,12 @@ public final class AppSessionController {
   }
 
   public var isSetupComplete: Bool {
-    configuration.isSetupComplete && !(tokenStore.readToken()?.isEmpty ?? true)
+    configuration.isSetupComplete && tokenStore.readToken()?.isEmpty == false
   }
 
   public func saveSetup(baseURLString: String, token: String, deviceName: String) throws {
     let trimmedURL = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
 
     let configuration = AppConfiguration(baseURLString: trimmedURL, deviceName: trimmedName)
@@ -37,8 +38,12 @@ public final class AppSessionController {
       throw GatewaySetupError.missingDeviceName
     }
 
+    guard !trimmedToken.isEmpty else {
+      throw GatewaySetupError.missingToken
+    }
+
     configurationStore.save(configuration)
-    _ = tokenStore.saveToken(token)
+    _ = tokenStore.saveToken(trimmedToken)
     self.configuration = configuration
   }
 
@@ -62,7 +67,9 @@ public final class AppSessionController {
   }
 
   public func replaceToken(_ token: String) {
-    _ = tokenStore.saveToken(token)
+    let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedToken.isEmpty else { return }
+    _ = tokenStore.saveToken(trimmedToken)
   }
 
   public func clearLocalData() {

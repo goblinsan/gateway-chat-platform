@@ -32,6 +32,7 @@ public final class GatewayAppViewModel: ObservableObject {
   }
 
   public func replaceToken(_ value: String) {
+    guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     session.replaceToken(value)
     apiToken = ""
   }

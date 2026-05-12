@@ -13,7 +13,7 @@ public struct AppConfiguration: Equatable {
     guard
       let parsed = URL(string: baseURLString),
       let scheme = parsed.scheme,
-      !scheme.isEmpty,
+      ["http", "https"].contains(scheme.lowercased()),
       let host = parsed.host,
       !host.isEmpty
     else {
@@ -37,12 +37,15 @@ public enum GatewayConnectionStatus: Equatable {
 
 public enum GatewaySetupError: LocalizedError, Equatable {
   case invalidBaseURL
+  case missingToken
   case missingDeviceName
 
   public var errorDescription: String? {
     switch self {
     case .invalidBaseURL:
       return "Enter a valid Gateway URL."
+    case .missingToken:
+      return "Enter an API token."
     case .missingDeviceName:
       return "Enter a device name."
     }

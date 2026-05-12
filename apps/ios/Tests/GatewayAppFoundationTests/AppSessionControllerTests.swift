@@ -25,6 +25,7 @@ final class AppSessionControllerTests: XCTestCase {
     )
 
     XCTAssertThrowsError(try session.saveSetup(baseURLString: "not-a-url", token: "abc", deviceName: "phone"))
+    XCTAssertThrowsError(try session.saveSetup(baseURLString: "https://gateway.example.com", token: "   ", deviceName: "phone"))
     XCTAssertThrowsError(try session.saveSetup(baseURLString: "https://gateway.example.com", token: "abc", deviceName: "   "))
   }
 
@@ -37,6 +38,17 @@ final class AppSessionControllerTests: XCTestCase {
     let status = await session.runHealthCheck()
 
     XCTAssertEqual(status, .connected)
+  }
+
+  func testHealthCheckMapsNonOkResponseToFailedStatus() async {
+    let configStore = MockConfigurationStore(configuration: .init(baseURLString: "https://gateway.example.com", deviceName: "My iPhone"))
+    let tokenStore = InMemoryTokenStore(token: "abc")
+    let health = MockHealthChecker(response: .init(status: "degraded"))
+    let session = AppSessionController(configurationStore: configStore, tokenStore: tokenStore, healthChecker: health)
+
+    let status = await session.runHealthCheck()
+
+    XCTAssertEqual(status, .failed("Gateway status: degraded"))
   }
 }
 

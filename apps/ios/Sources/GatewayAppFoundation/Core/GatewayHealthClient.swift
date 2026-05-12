@@ -33,7 +33,14 @@ public final class GatewayHealthClient: GatewayHealthChecking {
   }
 
   public func checkHealth(baseURL: URL, token: String?) async throws -> GatewayHealthResponse {
-    let url = baseURL.appending(path: "api/health")
+    var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+    let basePath = components?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
+    components?.path = basePath.isEmpty ? "/api/health" : "/\(basePath)/api/health"
+
+    guard let url = components?.url else {
+      throw GatewayHealthError.invalidResponse
+    }
+
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
     if let token, !token.isEmpty {
