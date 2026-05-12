@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+    # iOS-only changes are excluded; mixed commits still deploy if any non-iOS file changes.
+    paths-ignore:
+      - 'apps/ios/**'
   workflow_dispatch:
     inputs:
       revision:

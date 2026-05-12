@@ -4,12 +4,13 @@ A multi-provider AI gateway with an intelligent routing engine, conversation per
 
 ## Architecture
 
-This is a pnpm monorepo containing three packages:
+This is a pnpm monorepo containing three packages plus an iOS app directory:
 
 | Package | Description |
 |---|---|
 | `apps/chat-api` | Fastify backend — API gateway, routing engine, and persistence layer |
 | `apps/chat-ui` | React/Vite single-page app — chat interface |
+| `apps/ios` | iOS client app workspace (native project files) |
 | `packages/shared` | Shared TypeScript types and API contracts |
 
 The production stack uses Docker Compose with an Nginx reverse proxy in front of both services. Nginx routes `/api/*` to the API and `/` to the UI, and enforces Cloudflare IP allowlisting.
