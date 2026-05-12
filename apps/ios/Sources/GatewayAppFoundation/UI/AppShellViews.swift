@@ -13,12 +13,12 @@ public final class GatewayAppViewModel: ObservableObject {
 
   public init(session: AppSessionController) {
     self.session = session
-    let configuration = session.configuration
-    self.baseURL = configuration.baseURLString
-    self.deviceName = configuration.deviceName
+    self.baseURL = ""
+    self.deviceName = ""
     self.apiToken = ""
-    self.connectionStatus = session.connectionStatus
-    self.connectionIdentity = session.connectionIdentity
+    self.connectionStatus = .unknown
+    self.connectionIdentity = nil
+    syncFromSession()
   }
 
   public var isSetupComplete: Bool {
@@ -27,28 +27,33 @@ public final class GatewayAppViewModel: ObservableObject {
 
   public func saveSetup() throws {
     try session.saveSetup(baseURLString: baseURL, token: apiToken, deviceName: deviceName)
+    syncFromSession()
   }
 
   public func checkConnection() async {
-    connectionStatus = await session.runHealthCheck()
-    connectionIdentity = session.connectionIdentity
+    _ = await session.runHealthCheck()
+    syncFromSession()
   }
 
   public func replaceToken(_ value: String) {
     guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     session.replaceToken(value)
     apiToken = ""
-    connectionStatus = .unknown
-    connectionIdentity = nil
+    syncFromSession()
   }
 
   public func clearLocalData() {
     session.clearLocalData()
-    baseURL = ""
-    deviceName = ""
+    syncFromSession()
     apiToken = ""
-    connectionStatus = .unknown
-    connectionIdentity = nil
+  }
+
+  private func syncFromSession() {
+    let configuration = session.configuration
+    baseURL = configuration.baseURLString
+    deviceName = configuration.deviceName
+    connectionStatus = session.connectionStatus
+    connectionIdentity = session.connectionIdentity
   }
 }
 

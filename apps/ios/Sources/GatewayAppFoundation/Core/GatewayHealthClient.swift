@@ -38,7 +38,7 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
 
   public func checkHealth(baseURL: URL, token: String?) async throws -> GatewayHealthResponse {
     // Keep any base path (e.g., hostname root or /chat/) and append /api/health.
-    // Route mounting is controlled by gateway-control-plane deployment config.
+    // Route mounting and base-path behavior are controlled by gateway-control-plane.
     guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/health") else {
       throw GatewayHealthError.invalidResponse
     }
@@ -85,11 +85,14 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
     let decoded = try JSONDecoder().decode(SessionMeResponse.self, from: data)
     // Identity ordering is aligned to server-resolved /api/session/me response shapes:
     // no client-provided identifier is used for user identity.
-    // 1) nested user.id, 2) top-level id, 3) compatibility fallbacks (userId, email).
-    return decoded.user?.id ?? decoded.id ?? decoded.userId ?? decoded.email
+    // 1) nested user.id, 2) top-level id.
+    return decoded.user?.id ?? decoded.id
   }
 
   private func endpointURL(baseURL: URL, endpointPath: String) -> URL? {
+    // This preserves both root-mounted hosts and fallback /chat/ mounting by appending
+    // endpoints under the incoming base URL path. If this joining rule changes, the
+    // gateway-control-plane deployment contract must be updated in lockstep.
     var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
     let basePath = components?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
     let endpoint = endpointPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -100,12 +103,9 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
 
 private struct SessionMeResponse: Decodable {
   let id: String?
-  let userId: String?
-  let email: String?
   let user: SessionUser?
 }
 
 private struct SessionUser: Decodable {
   let id: String?
-  let email: String?
 }
