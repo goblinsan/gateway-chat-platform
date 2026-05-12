@@ -27,6 +27,10 @@ public final class AppSessionController {
     configuration.isSetupComplete && tokenStore.readToken()?.isEmpty == false
   }
 
+  public var apiToken: String? {
+    tokenStore.readToken()
+  }
+
   public func saveSetup(baseURLString: String, token: String, deviceName: String) throws {
     let trimmedURL = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)

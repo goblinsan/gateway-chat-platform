@@ -1,5 +1,10 @@
 #if canImport(SwiftUI)
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 @MainActor
 public final class GatewayAppViewModel: ObservableObject {
@@ -10,9 +15,11 @@ public final class GatewayAppViewModel: ObservableObject {
   @Published public var connectionIdentity: String?
 
   private let session: AppSessionController
+  let chatClient: GatewayChatServing
 
-  public init(session: AppSessionController) {
+  public init(session: AppSessionController, chatClient: GatewayChatServing = GatewayChatClient()) {
     self.session = session
+    self.chatClient = chatClient
     self.baseURL = ""
     self.deviceName = ""
     self.apiToken = ""
@@ -23,6 +30,18 @@ public final class GatewayAppViewModel: ObservableObject {
 
   public var isSetupComplete: Bool {
     session.isSetupComplete
+  }
+
+  var gatewayBaseURL: URL? {
+    session.configuration.baseURL
+  }
+
+  var gatewayToken: String? {
+    session.apiToken
+  }
+
+  var gatewayDeviceName: String {
+    session.configuration.deviceName
   }
 
   public func saveSetup() throws {
@@ -129,10 +148,7 @@ struct MainNavigationView: View {
 
   var body: some View {
     TabView {
-      NavigationStack {
-        Text("Chat")
-          .navigationTitle("Chat")
-      }
+      ChatView(model: model)
       .tabItem {
         Label("Chat", systemImage: "bubble.left.and.bubble.right")
       }
@@ -159,6 +175,237 @@ struct MainNavigationView: View {
         }
     }
   }
+}
+
+struct ChatView: View {
+  @ObservedObject var model: GatewayAppViewModel
+  @State private var agents: [GatewayAgentSummary] = []
+  @State private var selectedAgentID: String?
+  @State private var messages: [ChatMessageRow] = []
+  @State private var threadID: String?
+  @State private var prompt = ""
+  @State private var isLoadingAgents = false
+  @State private var isSending = false
+  @State private var errorMessage: String?
+
+  // Fall back to the first item from the latest loaded agent list when no explicit selection is made.
+  private var fallbackAgentID: String? {
+    agents.first?.id
+  }
+
+  private var resolvedAgentID: String? {
+    selectedAgentID ?? fallbackAgentID
+  }
+
+  var body: some View {
+    NavigationStack {
+      VStack(spacing: 12) {
+        if isLoadingAgents {
+          ProgressView("Loading agents…")
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        if !agents.isEmpty {
+          Picker("Agent", selection: $selectedAgentID) {
+            if let defaultName = agents.first?.name {
+              Text("Auto-select (\(defaultName))").tag(Optional<String>.none)
+            }
+            ForEach(agents) { agent in
+              Text("\(agent.icon ?? "🤖") \(agent.name)").tag(Optional(agent.id))
+            }
+          }
+          .pickerStyle(.menu)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        if let threadID {
+          Text("Thread: \(threadID)")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 8) {
+            if messages.isEmpty {
+              Text("Send a prompt to start chatting.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+              ForEach(messages) { message in
+                ChatMessageBubble(message: message)
+              }
+            }
+          }
+        }
+
+        if let errorMessage {
+          Text(errorMessage)
+            .font(.footnote)
+            .foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        HStack(alignment: .bottom, spacing: 8) {
+          TextField("Type a prompt…", text: $prompt, axis: .vertical)
+            .lineLimit(1...4)
+            .textInputAutocapitalization(.sentences)
+            .autocorrectionDisabled(false)
+
+          Button {
+            Task {
+              await sendPrompt()
+            }
+          } label: {
+            if isSending {
+              ProgressView()
+            } else {
+              Text("Send")
+            }
+          }
+          .disabled(isSending || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+      }
+      .padding()
+      .navigationTitle("Chat")
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Reload Agents") {
+            Task {
+              await loadAgents()
+            }
+          }
+          .disabled(isLoadingAgents || isSending)
+        }
+      }
+    }
+    .task {
+      await loadAgents()
+    }
+  }
+
+  private func loadAgents() async {
+    guard let baseURL = model.gatewayBaseURL else {
+      errorMessage = GatewayChatError.missingConfiguration.localizedDescription
+      return
+    }
+
+    isLoadingAgents = true
+    defer { isLoadingAgents = false }
+
+    do {
+      let fetched = try await model.chatClient.fetchAgents(baseURL: baseURL, token: model.gatewayToken)
+      agents = fetched
+      if let selectedAgentID, !agents.contains(where: { $0.id == selectedAgentID }) {
+        self.selectedAgentID = nil
+      }
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func sendPrompt() async {
+    let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedPrompt.isEmpty else {
+      errorMessage = GatewayChatError.emptyPrompt.localizedDescription
+      return
+    }
+    guard let baseURL = model.gatewayBaseURL else {
+      errorMessage = GatewayChatError.missingConfiguration.localizedDescription
+      return
+    }
+    guard let resolvedAgentID else {
+      errorMessage = GatewayChatError.missingAgent.localizedDescription
+      return
+    }
+    guard agents.contains(where: { $0.id == resolvedAgentID }) else {
+      errorMessage = "Selected agent is no longer available. Please tap \"Reload Agents\" to refresh the list."
+      return
+    }
+
+    let userMessage = ChatMessageRow(role: .user, content: trimmedPrompt)
+    messages.append(userMessage)
+    prompt = ""
+    isSending = true
+    errorMessage = nil
+    defer { isSending = false }
+
+    let conversation = messages.map { message in
+      let role: String
+      switch message.role {
+      case .user:
+        role = "user"
+      case .assistant:
+        role = "assistant"
+      }
+      return GatewayConversationMessage(role: role, content: message.content)
+    }
+
+    do {
+      let result = try await model.chatClient.sendPrompt(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        prompt: GatewayTypedPrompt(text: trimmedPrompt, agentID: resolvedAgentID),
+        messages: conversation,
+        threadID: threadID,
+        deviceName: model.gatewayDeviceName
+      )
+      if let returnedThreadID = result.threadID {
+        threadID = returnedThreadID
+      }
+      messages.append(ChatMessageRow(role: .assistant, content: result.content))
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+}
+
+struct ChatMessageBubble: View {
+  let message: ChatMessageRow
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Text(message.role == .user ? "You" : "Assistant")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Spacer()
+        if message.role == .assistant {
+          Button("Copy") {
+            copyToClipboard(message.content)
+          }
+          .font(.caption)
+        }
+      }
+
+      Text(message.content)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(message.role == .user ? Color.blue.opacity(0.15) : Color.gray.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+  }
+}
+
+struct ChatMessageRow: Identifiable, Equatable {
+  enum Role: String {
+    case user
+    case assistant
+  }
+
+  let id = UUID()
+  let role: Role
+  let content: String
+}
+
+private func copyToClipboard(_ text: String) {
+  #if canImport(UIKit)
+  UIPasteboard.general.string = text
+  #elseif canImport(AppKit)
+  NSPasteboard.general.clearContents()
+  NSPasteboard.general.setString(text, forType: .string)
+  #endif
 }
 
 struct SettingsView: View {
