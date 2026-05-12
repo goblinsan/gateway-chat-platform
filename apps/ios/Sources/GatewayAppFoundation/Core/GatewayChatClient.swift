@@ -10,6 +10,24 @@ public struct GatewayAgentSummary: Decodable, Equatable, Identifiable {
   public let enabled: Bool?
 }
 
+/// A single event emitted by the `/api/chat/stream` SSE endpoint.
+public enum GatewayStreamEvent: Equatable, Sendable {
+  /// A text token from the assistant response.
+  case token(String)
+  /// Stream finished normally. Carries the resolved agent and thread IDs.
+  case done(agentID: String, threadID: String?)
+  /// The orchestrated agent requires human approval before proceeding.
+  case approvalRequest
+  /// An alert was created during the agent run.
+  case alertCreated
+  /// A tool invocation has started.
+  case toolStarted
+  /// A tool invocation returned a result.
+  case toolResult
+  /// The server reported a streaming error.
+  case error(String)
+}
+
 public struct GatewayConversationMessage: Equatable, Encodable {
   public let role: String
   public let content: String
@@ -46,6 +64,19 @@ public protocol GatewayChatServing {
     threadID: String?,
     deviceName: String?
   ) async throws -> GatewayChatResult
+  /// Open a streaming request to `/api/chat/stream` and emit SSE events via
+  /// the returned `AsyncThrowingStream`. Pre-flight errors (empty prompt, missing
+  /// agent, bad URL) are thrown before the stream is returned.  Iterating the
+  /// stream yields events until a `.done` event or an error is encountered.
+  /// Cancelling the consuming `Task` closes the connection gracefully.
+  func streamPrompt(
+    baseURL: URL,
+    token: String?,
+    prompt: GatewayTypedPrompt,
+    messages: [GatewayConversationMessage],
+    threadID: String?,
+    deviceName: String?
+  ) async throws -> AsyncThrowingStream<GatewayStreamEvent, Error>
 }
 
 public enum GatewayChatError: LocalizedError, Equatable {
@@ -159,6 +190,135 @@ public final class GatewayChatClient: GatewayChatServing {
       return try await session.data(for: request)
     } catch {
       throw GatewayChatError.transport(error.localizedDescription)
+    }
+  }
+
+  public func streamPrompt(
+    baseURL: URL,
+    token: String?,
+    prompt: GatewayTypedPrompt,
+    messages: [GatewayConversationMessage],
+    threadID: String?,
+    deviceName: String?
+  ) async throws -> AsyncThrowingStream<GatewayStreamEvent, Error> {
+    let trimmedPrompt = prompt.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedPrompt.isEmpty else { throw GatewayChatError.emptyPrompt }
+
+    guard let agentID = prompt.agentID?.trimmingCharacters(in: .whitespacesAndNewlines), !agentID.isEmpty else {
+      throw GatewayChatError.missingAgent
+    }
+
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/chat/stream") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: deviceName)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+
+    let payload = ChatRequestPayload(
+      agentID: agentID,
+      threadID: threadID,
+      messages: messages.map { .init(role: $0.role, content: $0.content) }
+    )
+    request.httpBody = try JSONEncoder().encode(payload)
+
+    #if canImport(FoundationNetworking)
+    // FoundationNetworking (Linux) does not expose URLSession.bytes(for:).
+    // Load the full response body and replay SSE events synchronously.
+    let (data, response): (Data, URLResponse)
+    do {
+      (data, response) = try await session.data(for: request)
+    } catch {
+      throw GatewayChatError.transport(error.localizedDescription)
+    }
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let sseText = String(data: data, encoding: .utf8) ?? ""
+    let events = sseText.components(separatedBy: "\n").compactMap {
+      parseSseLine($0, fallbackAgentID: agentID)
+    }
+    return AsyncThrowingStream { continuation in
+      for event in events {
+        continuation.yield(event)
+      }
+      continuation.finish()
+    }
+    #else
+    // On Apple platforms use the native streaming API so tokens arrive
+    // incrementally as they are produced by the server.
+    let (bytes, response): (URLSession.AsyncBytes, URLResponse)
+    do {
+      (bytes, response) = try await session.bytes(for: request)
+    } catch {
+      throw GatewayChatError.transport(error.localizedDescription)
+    }
+
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      var errorData = Data()
+      for try await byte in bytes {
+        errorData.append(byte)
+      }
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: errorData))
+    }
+
+    return AsyncThrowingStream { continuation in
+      let feedTask = Task {
+        do {
+          for try await line in bytes.lines {
+            if Task.isCancelled { break }
+            if let event = parseSseLine(line, fallbackAgentID: agentID) {
+              continuation.yield(event)
+            }
+          }
+          continuation.finish()
+        } catch {
+          continuation.finish(throwing: error)
+        }
+      }
+      continuation.onTermination = { _ in feedTask.cancel() }
+    }
+    #endif
+  }
+
+  /// Parse a single SSE `data:` line into a `GatewayStreamEvent`.
+  /// Returns `nil` for lines that are not SSE data lines or contain unknown types.
+  private func parseSseLine(_ line: String, fallbackAgentID: String) -> GatewayStreamEvent? {
+    guard line.hasPrefix("data: ") else { return nil }
+    let jsonStr = String(line.dropFirst(6))
+    guard
+      let data = jsonStr.data(using: .utf8),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let type = json["type"] as? String
+    else { return nil }
+
+    switch type {
+    case "token":
+      guard let tok = json["token"] as? String else { return nil }
+      return .token(tok)
+    case "done":
+      let aid = (json["agentId"] as? String) ?? fallbackAgentID
+      let rawTID = json["threadId"] as? String
+      let tid = (rawTID?.isEmpty == false) ? rawTID : nil
+      return .done(agentID: aid, threadID: tid)
+    case "approval_request":
+      return .approvalRequest
+    case "alert_created":
+      return .alertCreated
+    case "tool_started":
+      return .toolStarted
+    case "tool_result":
+      return .toolResult
+    case "error":
+      let msg = json["error"] as? String ?? "Unknown streaming error"
+      return .error(msg)
+    default:
+      return nil
     }
   }
 
