@@ -7,6 +7,7 @@ public final class GatewayAppViewModel: ObservableObject {
   @Published public var apiToken: String
   @Published public var deviceName: String
   @Published public var connectionStatus: GatewayConnectionStatus
+  @Published public var connectionIdentity: String?
 
   private let session: AppSessionController
 
@@ -17,6 +18,7 @@ public final class GatewayAppViewModel: ObservableObject {
     self.deviceName = configuration.deviceName
     self.apiToken = ""
     self.connectionStatus = session.connectionStatus
+    self.connectionIdentity = session.connectionIdentity
   }
 
   public var isSetupComplete: Bool {
@@ -29,6 +31,7 @@ public final class GatewayAppViewModel: ObservableObject {
 
   public func checkConnection() async {
     connectionStatus = await session.runHealthCheck()
+    connectionIdentity = session.connectionIdentity
   }
 
   public func replaceToken(_ value: String) {
@@ -43,6 +46,7 @@ public final class GatewayAppViewModel: ObservableObject {
     deviceName = ""
     apiToken = ""
     connectionStatus = .unknown
+    connectionIdentity = nil
   }
 }
 
@@ -160,6 +164,7 @@ struct SettingsView: View {
         Section("Connection") {
           Text("Gateway URL: \(model.baseURL)")
           Text("Device: \(model.deviceName)")
+          Text("Identity: \(model.connectionIdentity ?? "Unknown")")
           ConnectionStatusText(status: model.connectionStatus)
           Button("Retest Connection") {
             Task {

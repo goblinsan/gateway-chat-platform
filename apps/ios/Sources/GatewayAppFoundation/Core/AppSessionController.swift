@@ -4,18 +4,22 @@ public final class AppSessionController {
   private let configurationStore: AppConfigurationStoring
   private let tokenStore: TokenStoring
   private let healthChecker: GatewayHealthChecking
+  private let identityChecker: GatewaySessionIdentityChecking?
 
   public private(set) var configuration: AppConfiguration
   public private(set) var connectionStatus: GatewayConnectionStatus = .unknown
+  public private(set) var connectionIdentity: String?
 
   public init(
     configurationStore: AppConfigurationStoring,
     tokenStore: TokenStoring,
-    healthChecker: GatewayHealthChecking
+    healthChecker: GatewayHealthChecking,
+    identityChecker: GatewaySessionIdentityChecking? = nil
   ) {
     self.configurationStore = configurationStore
     self.tokenStore = tokenStore
     self.healthChecker = healthChecker
+    self.identityChecker = identityChecker
     self.configuration = configurationStore.load()
   }
 
@@ -59,8 +63,14 @@ public final class AppSessionController {
     do {
       let response = try await healthChecker.checkHealth(baseURL: baseURL, token: tokenStore.readToken())
       connectionStatus = response.status == "ok" ? .connected : .failed("Gateway status: \(response.status)")
+      if case .connected = connectionStatus {
+        connectionIdentity = try? await identityChecker?.fetchConnectionIdentity(baseURL: baseURL, token: tokenStore.readToken())
+      } else {
+        connectionIdentity = nil
+      }
     } catch {
       connectionStatus = .failed(error.localizedDescription)
+      connectionIdentity = nil
     }
 
     return connectionStatus
@@ -77,5 +87,6 @@ public final class AppSessionController {
     _ = tokenStore.clearToken()
     configuration = configurationStore.load()
     connectionStatus = .unknown
+    connectionIdentity = nil
   }
 }
