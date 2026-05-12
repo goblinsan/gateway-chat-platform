@@ -294,7 +294,7 @@ struct ChatView: View {
 
     do {
       let fetched = try await chatClient.fetchAgents(baseURL: baseURL, token: model.gatewayToken)
-      agents = fetched.filter { $0.enabled == true }
+      agents = fetched
       if let selectedAgentID, !agents.contains(where: { $0.id == selectedAgentID }) {
         self.selectedAgentID = nil
       }
@@ -338,7 +338,7 @@ struct ChatView: View {
         deviceName: model.gatewayDeviceName
       )
       if let returnedThreadID = result.threadID {
-        threadID = returnedThreadID.isEmpty ? nil : returnedThreadID
+        threadID = returnedThreadID
       }
       messages.append(ChatMessageRow(role: .assistant, content: result.content))
     } catch {

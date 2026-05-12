@@ -143,11 +143,12 @@ public final class GatewayChatClient: GatewayChatServing {
     let decoded = try JSONDecoder().decode(ChatResponsePayload.self, from: data)
     let assistantContent = decoded.message.content.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !assistantContent.isEmpty else { throw GatewayChatError.invalidResponse }
+    let normalizedThreadID = decoded.threadID?.trimmingCharacters(in: .whitespacesAndNewlines)
 
     return GatewayChatResult(
       agentID: decoded.agentID,
       content: assistantContent,
-      threadID: decoded.threadID
+      threadID: (normalizedThreadID?.isEmpty == false) ? normalizedThreadID : nil
     )
   }
 
