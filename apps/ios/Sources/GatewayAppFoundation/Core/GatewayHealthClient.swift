@@ -83,6 +83,8 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
     }
 
     let decoded = try JSONDecoder().decode(SessionMeResponse.self, from: data)
+    // Identity ordering is aligned to expected /api/session/me shapes:
+    // 1) nested user.id, 2) top-level id, 3) compatibility fallbacks.
     return decoded.user?.id ?? decoded.id ?? decoded.userId ?? decoded.email
   }
 

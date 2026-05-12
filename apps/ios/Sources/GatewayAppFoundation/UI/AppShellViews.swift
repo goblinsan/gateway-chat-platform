@@ -38,6 +38,8 @@ public final class GatewayAppViewModel: ObservableObject {
     guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     session.replaceToken(value)
     apiToken = ""
+    connectionStatus = .unknown
+    connectionIdentity = nil
   }
 
   public func clearLocalData() {

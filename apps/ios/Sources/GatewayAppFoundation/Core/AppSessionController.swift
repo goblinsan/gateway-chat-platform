@@ -64,7 +64,12 @@ public final class AppSessionController {
       let response = try await healthChecker.checkHealth(baseURL: baseURL, token: tokenStore.readToken())
       connectionStatus = response.status == "ok" ? .connected : .failed("Gateway status: \(response.status)")
       if case .connected = connectionStatus {
-        connectionIdentity = try? await identityChecker?.fetchConnectionIdentity(baseURL: baseURL, token: tokenStore.readToken())
+        do {
+          connectionIdentity = try await identityChecker?.fetchConnectionIdentity(baseURL: baseURL, token: tokenStore.readToken())
+        } catch {
+          connectionIdentity = nil
+          connectionStatus = .failed("Gateway connected, but identity lookup failed: \(error.localizedDescription)")
+        }
       } else {
         connectionIdentity = nil
       }
@@ -80,6 +85,8 @@ public final class AppSessionController {
     let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedToken.isEmpty else { return }
     _ = tokenStore.saveToken(trimmedToken)
+    connectionStatus = .unknown
+    connectionIdentity = nil
   }
 
   public func clearLocalData() {

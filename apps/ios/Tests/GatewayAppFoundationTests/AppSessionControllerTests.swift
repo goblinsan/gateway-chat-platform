@@ -67,6 +67,45 @@ final class AppSessionControllerTests: XCTestCase {
 
     XCTAssertEqual(session.connectionIdentity, "me@example.com")
   }
+
+  func testIdentityLookupFailureUpdatesConnectionStatus() async {
+    let configStore = MockConfigurationStore(configuration: .init(baseURLString: "https://gateway.example.com", deviceName: "My iPhone"))
+    let tokenStore = InMemoryTokenStore(token: "abc")
+    let health = MockHealthChecker(response: .init(status: "ok"))
+    let identity = ThrowingIdentityChecker()
+    let session = AppSessionController(
+      configurationStore: configStore,
+      tokenStore: tokenStore,
+      healthChecker: health,
+      identityChecker: identity
+    )
+
+    let status = await session.runHealthCheck()
+
+    guard case let .failed(message) = status else {
+      return XCTFail("Expected failed status when identity lookup throws")
+    }
+    XCTAssertTrue(message.contains("identity lookup failed"))
+  }
+
+  func testReplacingTokenResetsConnectionState() async {
+    let configStore = MockConfigurationStore(configuration: .init(baseURLString: "https://gateway.example.com", deviceName: "My iPhone"))
+    let tokenStore = InMemoryTokenStore(token: "abc")
+    let health = MockHealthChecker(response: .init(status: "ok"))
+    let identity = MockIdentityChecker(identity: "me@example.com")
+    let session = AppSessionController(
+      configurationStore: configStore,
+      tokenStore: tokenStore,
+      healthChecker: health,
+      identityChecker: identity
+    )
+
+    _ = await session.runHealthCheck()
+    session.replaceToken("new-token")
+
+    XCTAssertEqual(session.connectionStatus, .unknown)
+    XCTAssertNil(session.connectionIdentity)
+  }
 }
 
 private final class MockConfigurationStore: AppConfigurationStoring {
@@ -102,5 +141,13 @@ private struct MockIdentityChecker: GatewaySessionIdentityChecking {
 
   func fetchConnectionIdentity(baseURL: URL, token: String?) async throws -> String? {
     identity
+  }
+}
+
+private struct ThrowingIdentityChecker: GatewaySessionIdentityChecking {
+  enum TestError: Error { case failed }
+
+  func fetchConnectionIdentity(baseURL: URL, token: String?) async throws -> String? {
+    throw TestError.failed
   }
 }
