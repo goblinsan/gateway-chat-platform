@@ -147,9 +147,7 @@ public final class GatewayChatClient: GatewayChatServing {
     return GatewayChatResult(
       agentID: decoded.agentID,
       content: assistantContent,
-      // Preserve either field so iOS can continue a conversation if the backend
-      // returns `threadId` or an alternative `conversationId` identifier.
-      threadID: decoded.threadID ?? decoded.conversationID
+      threadID: decoded.threadID
     )
   }
 
@@ -218,13 +216,11 @@ private struct ChatResponsePayload: Decodable {
   let agentID: String
   let message: AssistantMessage
   let threadID: String?
-  let conversationID: String?
 
   enum CodingKeys: String, CodingKey {
     case agentID = "agentId"
     case message
     case threadID = "threadId"
-    case conversationID = "conversationId"
   }
 
   struct AssistantMessage: Decodable {
