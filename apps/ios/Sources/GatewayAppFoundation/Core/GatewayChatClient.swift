@@ -86,7 +86,7 @@ public final class GatewayChatClient: GatewayChatServing {
 
   public func fetchAgents(baseURL: URL, token: String?) async throws -> [GatewayAgentSummary] {
     guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/agents") else {
-      throw GatewayChatError.invalidResponse
+      throw GatewayChatError.missingConfiguration
     }
 
     var request = URLRequest(url: url)
@@ -119,7 +119,7 @@ public final class GatewayChatClient: GatewayChatServing {
     }
 
     guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/chat") else {
-      throw GatewayChatError.invalidResponse
+      throw GatewayChatError.missingConfiguration
     }
 
     var request = URLRequest(url: url)

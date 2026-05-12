@@ -208,7 +208,7 @@ struct ChatView: View {
         if !agents.isEmpty {
           Picker("Agent", selection: $selectedAgentID) {
             if let defaultName = agents.first?.name {
-              Text("Default (\(defaultName))").tag(Optional<String>.none)
+              Text("Auto-select (\(defaultName))").tag(Optional<String>.none)
             }
             ForEach(agents) { agent in
               Text("\(agent.icon ?? "🤖") \(agent.name)").tag(Optional(agent.id))
@@ -320,7 +320,7 @@ struct ChatView: View {
       return
     }
     guard agents.contains(where: { $0.id == resolvedAgentID }) else {
-      errorMessage = "Selected agent is unavailable. Reload agents and try again."
+      errorMessage = "Selected agent is no longer available. Please reload the agent list to see current options."
       return
     }
 
