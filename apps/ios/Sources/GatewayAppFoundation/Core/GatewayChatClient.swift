@@ -49,6 +49,7 @@ public protocol GatewayChatServing {
 }
 
 public enum GatewayChatError: LocalizedError, Equatable {
+  case missingConfiguration
   case emptyPrompt
   case missingAgent
   case invalidResponse
@@ -57,6 +58,8 @@ public enum GatewayChatError: LocalizedError, Equatable {
 
   public var errorDescription: String? {
     switch self {
+    case .missingConfiguration:
+      return "Complete setup before using chat."
     case .emptyPrompt:
       return "Enter a prompt before sending."
     case .missingAgent:
@@ -144,6 +147,8 @@ public final class GatewayChatClient: GatewayChatServing {
     return GatewayChatResult(
       agentID: decoded.agentID,
       content: assistantContent,
+      // Preserve either field so iOS can continue a conversation if the backend
+      // returns `threadId` or an alternative `conversationId` identifier.
       threadID: decoded.threadID ?? decoded.conversationID
     )
   }

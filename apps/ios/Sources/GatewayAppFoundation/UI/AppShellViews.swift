@@ -187,6 +187,7 @@ struct ChatView: View {
   @State private var isSending = false
   @State private var errorMessage: String?
 
+  // Default to the first available agent when no explicit selection is made.
   private var defaultAgentID: String? {
     agents.first?.id
   }
@@ -284,7 +285,7 @@ struct ChatView: View {
 
   private func loadAgents() async {
     guard let baseURL = model.gatewayBaseURL else {
-      errorMessage = GatewayChatError.invalidResponse.localizedDescription
+      errorMessage = GatewayChatError.missingConfiguration.localizedDescription
       return
     }
 
@@ -310,7 +311,7 @@ struct ChatView: View {
       return
     }
     guard let baseURL = model.gatewayBaseURL else {
-      errorMessage = GatewayChatError.invalidResponse.localizedDescription
+      errorMessage = GatewayChatError.missingConfiguration.localizedDescription
       return
     }
     guard let resolvedAgentID else {
