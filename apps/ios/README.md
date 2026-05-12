@@ -11,6 +11,16 @@ Swift foundation scaffolding for the native Gateway client now lives here.
 - Main tab shell with Chat, Alerts, Approvals, and Settings sections
 - Settings actions for token replacement, connection retest, and clearing local data
 
+## Control-plane contract notes
+
+The iOS foundation currently depends on these server endpoints remaining stable:
+
+- `GET /api/health`
+- `GET /api/session/me`
+
+If route mounting, base paths, or response shapes for these endpoints change, update
+`gateway-control-plane` and this iOS client in lockstep.
+
 ## Local validation
 
 ```bash

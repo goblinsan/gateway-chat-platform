@@ -38,7 +38,7 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
 
   public func checkHealth(baseURL: URL, token: String?) async throws -> GatewayHealthResponse {
     // Keep any base path (e.g., hostname root or /chat/) and append /api/health.
-    // Route mounting and base-path behavior are controlled by gateway-control-plane.
+    // This endpoint path is part of the gateway-control-plane deployment contract.
     guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/health") else {
       throw GatewayHealthError.invalidResponse
     }
@@ -63,6 +63,8 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
   }
 
   public func fetchConnectionIdentity(baseURL: URL, token: String?) async throws -> String? {
+    // /api/session/me is the server-owned identity contract; coordinate with
+    // gateway-control-plane before changing this endpoint or response assumptions.
     guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/session/me") else {
       throw GatewayHealthError.invalidResponse
     }
@@ -83,9 +85,9 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
     }
 
     let decoded = try JSONDecoder().decode(SessionMeResponse.self, from: data)
-    // Identity ordering is aligned to server-resolved /api/session/me response shapes:
-    // no client-provided identifier is used for user identity.
-    // 1) nested user.id, 2) top-level id.
+    // Prefer nested user.id when the API returns a user object; otherwise fall back
+    // to top-level id for deployments that return a flat session payload.
+    // No client-provided identifier is used.
     return decoded.user?.id ?? decoded.id
   }
 
