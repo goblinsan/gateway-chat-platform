@@ -20,6 +20,7 @@ The iOS foundation currently depends on these server endpoints remaining stable:
 - `GET /api/session/me`
 - `GET /api/agents`
 - `POST /api/chat`
+- `POST /api/chat/stream` (SSE; used as primary; falls back to `/api/chat` on failure)
 
 If route mounting, base paths, or response shapes for these endpoints change, update
 `gateway-control-plane` and this iOS client in lockstep.

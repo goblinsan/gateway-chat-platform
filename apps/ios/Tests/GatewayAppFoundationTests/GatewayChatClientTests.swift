@@ -141,6 +141,145 @@ final class GatewayChatClientTests: XCTestCase {
     }
   }
 
+  // MARK: - streamPrompt tests
+
+  func testStreamPromptEmitsTokensAndDoneEvent() async throws {
+    let sseBody = """
+    data: {"type":"token","token":"Hello"}\n\ndata: {"type":"token","token":" world"}\n\ndata: {"type":"done","agentId":"agent-a","threadId":"thread-2"}\n\n
+    """
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/chat/stream")
+      XCTAssertEqual(request.httpMethod, "POST")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-123")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "text/event-stream")
+      return (200, Data(sseBody.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let stream = try await client.streamPrompt(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      prompt: GatewayTypedPrompt(text: "Hi", agentID: "agent-a"),
+      messages: [.init(role: "user", content: "Hi")],
+      threadID: "thread-1",
+      deviceName: nil
+    )
+
+    var collected: [GatewayStreamEvent] = []
+    for try await event in stream {
+      collected.append(event)
+    }
+
+    XCTAssertEqual(collected, [
+      .token("Hello"),
+      .token(" world"),
+      .done(agentID: "agent-a", threadID: "thread-2"),
+    ])
+  }
+
+  func testStreamPromptRejectsEmptyPromptAndMissingAgent() async throws {
+    let client = GatewayChatClient(session: makeSession())
+    do {
+      _ = try await client.streamPrompt(
+        baseURL: URL(string: "https://gateway.example.com")!,
+        token: nil,
+        prompt: GatewayTypedPrompt(text: "  ", agentID: "agent-a"),
+        messages: [],
+        threadID: nil,
+        deviceName: nil
+      )
+      XCTFail("Expected empty prompt error")
+    } catch let error as GatewayChatError {
+      XCTAssertEqual(error, .emptyPrompt)
+    }
+
+    do {
+      _ = try await client.streamPrompt(
+        baseURL: URL(string: "https://gateway.example.com")!,
+        token: nil,
+        prompt: GatewayTypedPrompt(text: "Hello", agentID: nil),
+        messages: [],
+        threadID: nil,
+        deviceName: nil
+      )
+      XCTFail("Expected missing agent error")
+    } catch let error as GatewayChatError {
+      XCTAssertEqual(error, .missingAgent)
+    }
+  }
+
+  func testStreamPromptMapsServerErrorsToHttpError() async throws {
+    URLProtocolStub.handler = { _ in
+      let body = """
+      {"error":"Quota exceeded","message":"Quota exceeded for selected model."}
+      """
+      return (429, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    do {
+      _ = try await client.streamPrompt(
+        baseURL: URL(string: "https://gateway.example.com")!,
+        token: "token-123",
+        prompt: GatewayTypedPrompt(text: "Hello", agentID: "agent-a"),
+        messages: [.init(role: "user", content: "Hello")],
+        threadID: nil,
+        deviceName: nil
+      )
+      XCTFail("Expected HTTP error")
+    } catch let error as GatewayChatError {
+      XCTAssertEqual(error, .httpError(429, "Quota exceeded for selected model."))
+    }
+  }
+
+  func testStreamPromptEmitsErrorEvent() async throws {
+    let sseBody = """
+    data: {"type":"error","error":"Provider unavailable"}\n\n
+    """
+    URLProtocolStub.handler = { _ in (200, Data(sseBody.utf8)) }
+
+    let client = GatewayChatClient(session: makeSession())
+    let stream = try await client.streamPrompt(
+      baseURL: URL(string: "https://gateway.example.com")!,
+      token: nil,
+      prompt: GatewayTypedPrompt(text: "Hi", agentID: "agent-a"),
+      messages: [],
+      threadID: nil,
+      deviceName: nil
+    )
+
+    var collected: [GatewayStreamEvent] = []
+    for try await event in stream {
+      collected.append(event)
+    }
+
+    XCTAssertEqual(collected, [.error("Provider unavailable")])
+  }
+
+  func testStreamPromptIncludesThreadAndPlatformHeaders() async throws {
+    let sseBody = "data: {\"type\":\"done\",\"agentId\":\"agent-a\",\"threadId\":\"t-99\"}\n\n"
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Client-Platform"), "ios")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Device-Name"), "Test Device")
+
+      guard let bodyData = request.httpBody else { return (400, Data("{}".utf8)) }
+      let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+      XCTAssertEqual(payload["threadId"] as? String, "thread-1")
+      return (200, Data(sseBody.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let stream = try await client.streamPrompt(
+      baseURL: URL(string: "https://gateway.example.com")!,
+      token: nil,
+      prompt: GatewayTypedPrompt(text: "Hi", agentID: "agent-a"),
+      messages: [.init(role: "user", content: "Hi")],
+      threadID: "thread-1",
+      deviceName: "Test Device"
+    )
+    for try await _ in stream {}
+  }
+
   private func makeSession() -> URLSession {
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [URLProtocolStub.self]

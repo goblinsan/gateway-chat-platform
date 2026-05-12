@@ -187,6 +187,7 @@ struct ChatView: View {
   @State private var isLoadingAgents = false
   @State private var isSending = false
   @State private var errorMessage: String?
+  @State private var streamingTask: Task<Void, Never>?
 
   // Fall back to the first item from the latest loaded agent list when no explicit selection is made.
   private var fallbackAgentID: String? {
@@ -252,18 +253,20 @@ struct ChatView: View {
             .textInputAutocapitalization(.sentences)
             .autocorrectionDisabled(false)
 
-          Button {
-            Task {
-              await sendPrompt()
+          if isSending {
+            Button("Cancel") {
+              streamingTask?.cancel()
             }
-          } label: {
-            if isSending {
-              ProgressView()
-            } else {
+          } else {
+            Button {
+              streamingTask = Task {
+                await sendPrompt()
+              }
+            } label: {
               Text("Send")
             }
+            .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
           }
-          .disabled(isSending || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
       }
       .padding()
@@ -342,8 +345,13 @@ struct ChatView: View {
       return GatewayConversationMessage(role: role, content: message.content)
     }
 
+    // Append a placeholder for the in-progress assistant reply so the user
+    // sees the bubble appear immediately and tokens stream into it.
+    let placeholderID = UUID()
+    messages.append(ChatMessageRow(role: .assistant, content: "", id: placeholderID))
+
     do {
-      let result = try await model.chatClient.sendPrompt(
+      let stream = try await model.chatClient.streamPrompt(
         baseURL: baseURL,
         token: model.gatewayToken,
         prompt: GatewayTypedPrompt(text: trimmedPrompt, agentID: resolvedAgentID),
@@ -351,12 +359,59 @@ struct ChatView: View {
         threadID: threadID,
         deviceName: model.gatewayDeviceName
       )
-      if let returnedThreadID = result.threadID {
-        threadID = returnedThreadID
+
+      var accumulated = ""
+      for try await event in stream {
+        switch event {
+        case let .token(tok):
+          accumulated += tok
+          if let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
+            messages[idx].content = accumulated
+          }
+        case let .done(_, returnedThreadID):
+          if let tid = returnedThreadID {
+            threadID = tid
+          }
+        case let .error(msg):
+          errorMessage = msg
+        default:
+          break
+        }
       }
-      messages.append(ChatMessageRow(role: .assistant, content: result.content))
+
+      // Remove the placeholder if nothing was accumulated (e.g. empty response).
+      if accumulated.isEmpty {
+        messages.removeAll { $0.id == placeholderID }
+      }
+    } catch is CancellationError {
+      // User cancelled: retain partial content, remove empty placeholder.
+      if let idx = messages.firstIndex(where: { $0.id == placeholderID }),
+         messages[idx].content.isEmpty {
+        messages.remove(at: idx)
+      }
     } catch {
-      errorMessage = error.localizedDescription
+      // Streaming failed: remove placeholder and retry with the non-streaming endpoint.
+      // Show a brief diagnostic message so the user (and any operator watching the screen)
+      // can see that streaming was unavailable before the fallback result arrives.
+      errorMessage = "Streaming unavailable, retrying… (\(error.localizedDescription))"
+      messages.removeAll { $0.id == placeholderID }
+      do {
+        let result = try await model.chatClient.sendPrompt(
+          baseURL: baseURL,
+          token: model.gatewayToken,
+          prompt: GatewayTypedPrompt(text: trimmedPrompt, agentID: resolvedAgentID),
+          messages: conversation,
+          threadID: threadID,
+          deviceName: model.gatewayDeviceName
+        )
+        if let returnedThreadID = result.threadID {
+          threadID = returnedThreadID
+        }
+        messages.append(ChatMessageRow(role: .assistant, content: result.content))
+        errorMessage = nil
+      } catch {
+        errorMessage = error.localizedDescription
+      }
     }
   }
 }
@@ -394,9 +449,15 @@ struct ChatMessageRow: Identifiable, Equatable {
     case assistant
   }
 
-  let id = UUID()
+  let id: UUID
   let role: Role
-  let content: String
+  var content: String
+
+  init(role: Role, content: String, id: UUID = UUID()) {
+    self.id = id
+    self.role = role
+    self.content = content
+  }
 }
 
 private func copyToClipboard(_ text: String) {
