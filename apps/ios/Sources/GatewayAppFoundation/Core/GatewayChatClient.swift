@@ -186,11 +186,9 @@ public final class GatewayChatClient: GatewayChatServing {
   }
 
   private func endpointURL(baseURL: URL, endpointPath: String) -> URL? {
-    var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
-    let basePath = components?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
     let endpoint = endpointPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    components?.path = basePath.isEmpty ? "/\(endpoint)" : "/\(basePath)/\(endpoint)"
-    return components?.url
+    guard !endpoint.isEmpty else { return baseURL }
+    return baseURL.appendingPathComponent(endpoint)
   }
 }
 

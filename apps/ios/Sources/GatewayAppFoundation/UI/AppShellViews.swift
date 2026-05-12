@@ -188,7 +188,7 @@ struct ChatView: View {
   @State private var isSending = false
   @State private var errorMessage: String?
 
-  // Fall back to the first available agent when no explicit selection is made.
+  // Fall back to the first item from the latest loaded agent list when no explicit selection is made.
   private var fallbackAgentID: String? {
     agents.first?.id
   }
@@ -320,7 +320,7 @@ struct ChatView: View {
       return
     }
     guard agents.contains(where: { $0.id == resolvedAgentID }) else {
-      errorMessage = "Selected agent is no longer available. Please reload the agent list to see current options."
+      errorMessage = "Selected agent is no longer available. Please tap \"Reload Agents\" to refresh the list."
       return
     }
 
