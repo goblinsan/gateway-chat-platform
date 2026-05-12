@@ -15,9 +15,11 @@ public final class GatewayAppViewModel: ObservableObject {
   @Published public var connectionIdentity: String?
 
   private let session: AppSessionController
+  let chatClient: GatewayChatServing
 
-  public init(session: AppSessionController) {
+  public init(session: AppSessionController, chatClient: GatewayChatServing = GatewayChatClient()) {
     self.session = session
+    self.chatClient = chatClient
     self.baseURL = ""
     self.deviceName = ""
     self.apiToken = ""
@@ -177,7 +179,6 @@ struct MainNavigationView: View {
 
 struct ChatView: View {
   @ObservedObject var model: GatewayAppViewModel
-  private let chatClient = GatewayChatClient()
   @State private var agents: [GatewayAgentSummary] = []
   @State private var selectedAgentID: String?
   @State private var messages: [ChatMessageRow] = []
@@ -187,13 +188,13 @@ struct ChatView: View {
   @State private var isSending = false
   @State private var errorMessage: String?
 
-  // Default to the first available agent when no explicit selection is made.
-  private var defaultAgentID: String? {
+  // Fall back to the first available agent when no explicit selection is made.
+  private var fallbackAgentID: String? {
     agents.first?.id
   }
 
   private var resolvedAgentID: String? {
-    selectedAgentID ?? defaultAgentID
+    selectedAgentID ?? fallbackAgentID
   }
 
   var body: some View {
@@ -293,7 +294,7 @@ struct ChatView: View {
     defer { isLoadingAgents = false }
 
     do {
-      let fetched = try await chatClient.fetchAgents(baseURL: baseURL, token: model.gatewayToken)
+      let fetched = try await model.chatClient.fetchAgents(baseURL: baseURL, token: model.gatewayToken)
       agents = fetched
       if let selectedAgentID, !agents.contains(where: { $0.id == selectedAgentID }) {
         self.selectedAgentID = nil
@@ -329,7 +330,7 @@ struct ChatView: View {
     let conversation = messages.map { GatewayConversationMessage(role: $0.role.rawValue, content: $0.content) }
 
     do {
-      let result = try await chatClient.sendPrompt(
+      let result = try await model.chatClient.sendPrompt(
         baseURL: baseURL,
         token: model.gatewayToken,
         prompt: GatewayTypedPrompt(text: trimmedPrompt, agentID: resolvedAgentID),
