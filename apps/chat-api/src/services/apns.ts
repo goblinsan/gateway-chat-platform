@@ -8,8 +8,8 @@
  *   APNS_TEAM_ID        – 10-character Team ID from developer.apple.com
  *   APNS_KEY_ID         – 10-character Key ID for the .p8 signing key
  *   APNS_BUNDLE_ID      – App bundle identifier (e.g. com.example.myapp)
- *   APNS_PRIVATE_KEY_PATH   – path to the .p8 file  (mutually exclusive
- *   APNS_PRIVATE_KEY_BASE64   with APNS_PRIVATE_KEY_BASE64)
+ *   APNS_PRIVATE_KEY_PATH   – path to the .p8 file  (provide exactly one
+ *   APNS_PRIVATE_KEY_BASE64   of these two; they are mutually exclusive)
  *   APNS_SANDBOX        – "true" to target the sandbox endpoint
  */
 
