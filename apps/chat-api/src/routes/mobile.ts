@@ -58,6 +58,16 @@ function normalizeText(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
+function parseObjectJson(raw: string | null): Record<string, unknown> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 function buildDedupKey(input: {
   source: string
   sourceNode?: string
@@ -313,28 +323,15 @@ export default async function mobileRoutes(app: FastifyInstance) {
       })
 
       const duplicate = recent.find((candidate) => {
-        if (!candidate.metadataJson) return false
-        try {
-          const parsed = JSON.parse(candidate.metadataJson) as Record<string, unknown>
-          return typeof parsed.dedupKey === 'string' && parsed.dedupKey.toLowerCase() === dedupKey
-        } catch {
-          return false
-        }
+        const parsed = parseObjectJson(candidate.metadataJson)
+        return typeof parsed.dedupKey === 'string' && parsed.dedupKey.toLowerCase() === dedupKey
       })
 
       if (duplicate) {
         const previousSeverityRank = ALERT_SEVERITY_RANK[duplicate.severity] ?? 0
         const nextSeverityRank = ALERT_SEVERITY_RANK[severity] ?? 0
         const shouldEscalate = nextSeverityRank > previousSeverityRank
-        const existingMetadata = (() => {
-          if (!duplicate.metadataJson) return {}
-          try {
-            const parsed = JSON.parse(duplicate.metadataJson) as Record<string, unknown>
-            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-          } catch {
-            return {}
-          }
-        })()
+        const existingMetadata = parseObjectJson(duplicate.metadataJson)
         const currentDuplicateCount = typeof existingMetadata.duplicateCount === 'number'
           ? existingMetadata.duplicateCount
           : 1
