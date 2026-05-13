@@ -110,10 +110,27 @@ model MobileDevice {
   tokenHash  String
   tokenLast4 String
   deviceName String?
+  enabled    Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   lastSeenAt DateTime @default(now())
 
+  pushAttempts PushAttempt[]
+
   @@unique([userId, platform, tokenHash])
   @@index([userId, platform])
+}
+
+model PushAttempt {
+  id           String   @id @default(uuid())
+  deviceId     String
+  device       MobileDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  provider     String   @default("apns")
+  alertId      String?
+  status       String   // "success" | "error"
+  errorCode    String?
+  errorMessage String?
+  createdAt    DateTime @default(now())
+
+  @@index([deviceId])
 }

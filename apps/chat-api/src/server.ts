@@ -19,6 +19,7 @@ import personaRoutes from './routes/personas'
 import usageRoutes from './routes/usage'
 import sessionRoutes from './routes/session'
 import orchestrationRoutes from './routes/orchestration'
+import mobileRoutes from './routes/mobile'
 import cfAccessPlugin from './plugins/cfAccess'
 import userIdentityPlugin from './plugins/userIdentity'
 import { getPrismaClient } from './services/db'
@@ -108,6 +109,7 @@ async function bootstrap() {
   await app.register(usageRoutes, { prefix: '/api' })
   await app.register(sessionRoutes, { prefix: '/api' })
   await app.register(orchestrationRoutes, { prefix: '/api' })
+  await app.register(mobileRoutes, { prefix: '/api' })
 
   // Admin routes are protected by Cloudflare Access JWT validation (#62)
   await app.register(async (adminApp) => {
