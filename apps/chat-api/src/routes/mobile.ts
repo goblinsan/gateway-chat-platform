@@ -13,6 +13,11 @@ const ALERT_SEVERITY_RANK: Record<string, number> = {
   high: 3,
   critical: 4,
 }
+const CRITICAL_SEVERITY_KEYWORDS = ['critical', 'emergency', 'fatal', 'panic', 'alert', 'down']
+const HIGH_SEVERITY_KEYWORDS = ['high', 'error', 'err', 'failed', 'failure']
+const MEDIUM_SEVERITY_KEYWORDS = ['medium', 'warn', 'warning', 'degraded']
+const LOW_SEVERITY_KEYWORDS = ['low', 'notice']
+const INFO_SEVERITY_KEYWORDS = ['info', 'informational', 'debug', 'ok']
 
 function normalizeEventSource(raw: unknown): string {
   const source = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
@@ -33,11 +38,11 @@ function toSeverity(rawSeverity: unknown, source: string): string {
 
   const value = typeof rawSeverity === 'string' ? rawSeverity.trim().toLowerCase() : ''
   if (!value) return 'info'
-  if (['critical', 'emergency', 'fatal', 'panic', 'alert', 'down'].includes(value)) return 'critical'
-  if (['high', 'error', 'err', 'failed', 'failure'].includes(value)) return 'high'
-  if (['medium', 'warn', 'warning', 'degraded'].includes(value)) return 'medium'
-  if (['low', 'notice'].includes(value)) return 'low'
-  if (['info', 'informational', 'debug', 'ok'].includes(value)) return 'info'
+  if (CRITICAL_SEVERITY_KEYWORDS.includes(value)) return 'critical'
+  if (HIGH_SEVERITY_KEYWORDS.includes(value)) return 'high'
+  if (MEDIUM_SEVERITY_KEYWORDS.includes(value)) return 'medium'
+  if (LOW_SEVERITY_KEYWORDS.includes(value)) return 'low'
+  if (INFO_SEVERITY_KEYWORDS.includes(value)) return 'info'
 
   if (source === 'homelab') {
     if (value.includes('unreachable')) return 'critical'
@@ -294,7 +299,7 @@ export default async function mobileRoutes(app: FastifyInstance) {
       const sourceNode = normalizeText(req.body.sourceNode)
       const sourceService = normalizeText(req.body.sourceService)
       const eventType = normalizeText(req.body.eventType)
-      const title = normalizeText(req.body.title) ?? `${source.toUpperCase()} event`
+      const title = normalizeText(req.body.title) ?? `Alert from ${source}`
       const bodyText = normalizeText(req.body.body) ?? normalizeText(req.body.message)
       const severity = toSeverity(req.body.severity ?? req.body.level, source)
       const dedupKey = buildDedupKey({
@@ -314,8 +319,8 @@ export default async function mobileRoutes(app: FastifyInstance) {
           source,
           title,
           status: { in: ['open', 'acknowledged'] },
-          ...(sourceNode ? { sourceNode } : { sourceNode: null }),
-          ...(sourceService ? { sourceService } : { sourceService: null }),
+          sourceNode: sourceNode ?? null,
+          sourceService: sourceService ?? null,
           createdAt: { gte: new Date(now.getTime() - ALERT_DEDUP_LOOKBACK_MS) },
         },
         orderBy: { createdAt: 'desc' },
