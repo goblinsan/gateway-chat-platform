@@ -56,6 +56,12 @@ public struct GatewayChatResult: Equatable {
 
 public protocol GatewayChatServing {
   func fetchAgents(baseURL: URL, token: String?) async throws -> [GatewayAgentSummary]
+  func registerAPNsDevice(
+    baseURL: URL,
+    token: String?,
+    apnsToken: String,
+    deviceName: String?
+  ) async throws
   func sendPrompt(
     baseURL: URL,
     token: String?,
@@ -81,6 +87,7 @@ public protocol GatewayChatServing {
 
 public enum GatewayChatError: LocalizedError, Equatable {
   case missingConfiguration
+  case invalidAPNsToken
   case emptyPrompt
   case missingAgent
   case invalidResponse
@@ -91,6 +98,8 @@ public enum GatewayChatError: LocalizedError, Equatable {
     switch self {
     case .missingConfiguration:
       return "Complete setup before using chat."
+    case .invalidAPNsToken:
+      return "Provide a valid APNs token."
     case .emptyPrompt:
       return "Enter a prompt before sending."
     case .missingAgent:
@@ -132,6 +141,39 @@ public final class GatewayChatClient: GatewayChatServing {
 
     let decoded = try JSONDecoder().decode(AgentsResponse.self, from: data)
     return decoded.agents
+  }
+
+  public func registerAPNsDevice(
+    baseURL: URL,
+    token: String?,
+    apnsToken: String,
+    deviceName: String?
+  ) async throws {
+    let normalizedToken = apnsToken
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "<", with: "")
+      .replacingOccurrences(of: ">", with: "")
+      .replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
+      .lowercased()
+    guard normalizedToken.range(of: "^[a-f0-9]{32,512}$", options: .regularExpression) != nil else {
+      throw GatewayChatError.invalidAPNsToken
+    }
+
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/session/mobile-devices/apns") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: deviceName)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(RegisterAPNsDevicePayload(apnsToken: normalizedToken))
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
   }
 
   public func sendPrompt(
@@ -371,6 +413,10 @@ private struct ChatRequestPayload: Encodable {
     let role: String
     let content: String
   }
+}
+
+private struct RegisterAPNsDevicePayload: Encodable {
+  let apnsToken: String
 }
 
 private struct ChatResponsePayload: Decodable {

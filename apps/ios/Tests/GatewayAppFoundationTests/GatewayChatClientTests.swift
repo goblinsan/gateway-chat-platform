@@ -43,6 +43,44 @@ final class GatewayChatClientTests: XCTestCase {
     XCTAssertEqual(agents, [.init(id: "agent-a", name: "Agent A", icon: "🤖", enabled: true)])
   }
 
+  func testRegisterAPNsDeviceNormalizesTokenAndUsesSessionEndpoint() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/session/mobile-devices/apns")
+      XCTAssertEqual(request.httpMethod, "POST")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-123")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Client-Platform"), "ios")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Device-Name"), "My iPhone")
+
+      let bodyData = try XCTUnwrap(request.httpBody)
+      let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+      XCTAssertEqual(payload["apnsToken"] as? String, "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+      return (200, Data("{}".utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    try await client.registerAPNsDevice(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      apnsToken: "<ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789>",
+      deviceName: "My iPhone"
+    )
+  }
+
+  func testRegisterAPNsDeviceRejectsEmptyToken() async throws {
+    let client = GatewayChatClient(session: makeSession())
+    do {
+      try await client.registerAPNsDevice(
+        baseURL: URL(string: "https://gateway.example.com/chat/")!,
+        token: "token-123",
+        apnsToken: "   <>   ",
+        deviceName: "My iPhone"
+      )
+      XCTFail("Expected invalid APNs token error")
+    } catch let error as GatewayChatError {
+      XCTAssertEqual(error, .invalidAPNsToken)
+    }
+  }
+
   func testSendPromptIncludesThreadAndConversationAndParsesResult() async throws {
     URLProtocolStub.handler = { request in
       XCTAssertEqual(request.url?.path, "/chat/api/chat")
