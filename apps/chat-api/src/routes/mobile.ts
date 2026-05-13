@@ -326,30 +326,24 @@ export default async function mobileRoutes(app: FastifyInstance) {
         const previousSeverityRank = ALERT_SEVERITY_RANK[duplicate.severity] ?? 0
         const nextSeverityRank = ALERT_SEVERITY_RANK[severity] ?? 0
         const shouldEscalate = nextSeverityRank > previousSeverityRank
+        const existingMetadata = (() => {
+          if (!duplicate.metadataJson) return {}
+          try {
+            const parsed = JSON.parse(duplicate.metadataJson) as Record<string, unknown>
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+          } catch {
+            return {}
+          }
+        })()
+        const currentDuplicateCount = typeof existingMetadata.duplicateCount === 'number'
+          ? existingMetadata.duplicateCount
+          : 1
         const mergedMetadata = {
-          ...((() => {
-            if (!duplicate.metadataJson) return {}
-            try {
-              const parsed = JSON.parse(duplicate.metadataJson) as Record<string, unknown>
-              return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-            } catch {
-              return {}
-            }
-          })()),
+          ...existingMetadata,
           dedupKey,
           eventType,
           rawSeverity: req.body.severity ?? req.body.level ?? null,
-          duplicateCount:
-            (() => {
-              if (!duplicate.metadataJson) return 2
-              try {
-                const parsed = JSON.parse(duplicate.metadataJson) as Record<string, unknown>
-                const count = typeof parsed.duplicateCount === 'number' ? parsed.duplicateCount : 1
-                return count + 1
-              } catch {
-                return 2
-              }
-            })(),
+          duplicateCount: currentDuplicateCount + 1,
           lastSeenAt: now.toISOString(),
           ...(req.body.metadata ? { eventMetadata: req.body.metadata } : {}),
         }
