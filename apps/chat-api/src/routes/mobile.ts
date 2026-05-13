@@ -298,4 +298,157 @@ export default async function mobileRoutes(app: FastifyInstance) {
       return reply.send({ alert: updated })
     },
   )
+
+  // ---------------------------------------------------------------------------
+  // Action Approval endpoints
+  // ---------------------------------------------------------------------------
+
+  /**
+   * GET /api/mobile/actions/pending
+   *
+   * Lists pending (non-expired) action approvals for the authenticated user,
+   * ordered by creation date descending.
+   */
+  app.get(
+    '/mobile/actions/pending',
+    async (req, reply) => {
+      const now = new Date()
+      const approvals = await prisma.actionApproval.findMany({
+        where: {
+          userId: req.userId,
+          status: 'pending',
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: now } },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+      })
+      return reply.send({ approvals })
+    },
+  )
+
+  /**
+   * GET /api/mobile/actions/:id
+   *
+   * Returns the full detail for a single action approval owned by the
+   * authenticated user.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/mobile/actions/:id',
+    async (req, reply) => {
+      const approval = await prisma.actionApproval.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+      })
+
+      if (!approval) {
+        return reply.status(404).send({ error: 'Approval not found' })
+      }
+
+      return reply.send({ approval })
+    },
+  )
+
+  /**
+   * POST /api/mobile/actions/:id/approve
+   *
+   * Approves a pending action. Returns 409 if already decided.
+   * Returns 410 if the approval has expired.
+   * Audit-logs the decision before persisting.
+   */
+  app.post<{ Params: { id: string } }>(
+    '/mobile/actions/:id/approve',
+    async (req, reply) => {
+      const existing = await prisma.actionApproval.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+      })
+
+      if (!existing) {
+        return reply.status(404).send({ error: 'Approval not found' })
+      }
+
+      if (existing.status !== 'pending') {
+        return reply.status(409).send({ error: 'Approval is no longer pending', status: existing.status })
+      }
+
+      const now = new Date()
+      if (existing.expiresAt && existing.expiresAt <= now) {
+        // Mark as expired before returning
+        await prisma.actionApproval.update({
+          where: { id: existing.id },
+          data: { status: 'expired' },
+        })
+        return reply.status(410).send({ error: 'Approval has expired' })
+      }
+
+      req.log.info(
+        {
+          approvalId: existing.id,
+          userId: req.userId,
+          actionType: existing.actionType,
+          riskLevel: existing.riskLevel,
+          decision: 'approved',
+        },
+        'Action approval decision: approved',
+      )
+
+      const updated = await prisma.actionApproval.update({
+        where: { id: existing.id },
+        data: { status: 'approved', decidedAt: now, decidedBy: req.userId },
+      })
+
+      return reply.send({ approval: updated })
+    },
+  )
+
+  /**
+   * POST /api/mobile/actions/:id/deny
+   *
+   * Denies a pending action. Returns 409 if already decided.
+   * Returns 410 if the approval has expired.
+   * Audit-logs the decision before persisting.
+   */
+  app.post<{ Params: { id: string } }>(
+    '/mobile/actions/:id/deny',
+    async (req, reply) => {
+      const existing = await prisma.actionApproval.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+      })
+
+      if (!existing) {
+        return reply.status(404).send({ error: 'Approval not found' })
+      }
+
+      if (existing.status !== 'pending') {
+        return reply.status(409).send({ error: 'Approval is no longer pending', status: existing.status })
+      }
+
+      const now = new Date()
+      if (existing.expiresAt && existing.expiresAt <= now) {
+        await prisma.actionApproval.update({
+          where: { id: existing.id },
+          data: { status: 'expired' },
+        })
+        return reply.status(410).send({ error: 'Approval has expired' })
+      }
+
+      req.log.info(
+        {
+          approvalId: existing.id,
+          userId: req.userId,
+          actionType: existing.actionType,
+          riskLevel: existing.riskLevel,
+          decision: 'denied',
+        },
+        'Action approval decision: denied',
+      )
+
+      const updated = await prisma.actionApproval.update({
+        where: { id: existing.id },
+        data: { status: 'denied', decidedAt: now, decidedBy: req.userId },
+      })
+
+      return reply.send({ approval: updated })
+    },
+  )
 }

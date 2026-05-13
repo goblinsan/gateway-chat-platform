@@ -76,6 +76,51 @@ public struct GatewayAlertDetail: Decodable, Equatable, Identifiable, Sendable {
   }
 }
 
+// MARK: - Action Approval models
+
+/// Risk level for an action approval request.
+public enum GatewayApprovalRiskLevel: String, Decodable, Equatable, CaseIterable, Sendable {
+  case critical
+  case high
+  case medium
+  case low
+}
+
+/// Status of an action approval request.
+public enum GatewayApprovalStatus: String, Decodable, Equatable, CaseIterable, Sendable {
+  case pending
+  case approved
+  case denied
+  case expired
+}
+
+/// An action approval record returned by the approvals API.
+public struct GatewayActionApproval: Decodable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let userId: String
+  public let title: String
+  public let description: String?
+  public let riskLevel: String
+  public let actionType: String
+  public let targetNode: String?
+  public let targetService: String?
+  public let proposedByAgentId: String?
+  public let status: String
+  public let expiresAt: String?
+  public let createdAt: String
+  public let decidedAt: String?
+  public let decidedBy: String?
+  public let metadataJson: String?
+
+  public var riskLevelValue: GatewayApprovalRiskLevel {
+    GatewayApprovalRiskLevel(rawValue: riskLevel) ?? .medium
+  }
+
+  public var statusValue: GatewayApprovalStatus {
+    GatewayApprovalStatus(rawValue: status) ?? .pending
+  }
+}
+
 /// A single event emitted by the `/api/chat/stream` SSE endpoint.
 public enum GatewayStreamEvent: Equatable, Sendable {
   /// A text token from the assistant response.
@@ -179,6 +224,35 @@ public protocol GatewayChatServing {
     token: String?,
     alertID: String
   ) async throws -> GatewayAlertDetail
+
+  // MARK: - Action Approval
+
+  /// Fetch pending action approvals for the authenticated user.
+  func fetchPendingApprovals(
+    baseURL: URL,
+    token: String?
+  ) async throws -> [GatewayActionApproval]
+
+  /// Fetch the full detail for a single action approval.
+  func fetchApproval(
+    baseURL: URL,
+    token: String?,
+    approvalID: String
+  ) async throws -> GatewayActionApproval
+
+  /// Approve a pending action.
+  func approveAction(
+    baseURL: URL,
+    token: String?,
+    approvalID: String
+  ) async throws -> GatewayActionApproval
+
+  /// Deny a pending action.
+  func denyAction(
+    baseURL: URL,
+    token: String?,
+    approvalID: String
+  ) async throws -> GatewayActionApproval
 }
 
 public enum GatewayChatError: LocalizedError, Equatable {
@@ -569,6 +643,99 @@ public final class GatewayChatClient: GatewayChatServing {
     return decoded.alert
   }
 
+  // MARK: - Action Approval endpoints
+
+  public func fetchPendingApprovals(
+    baseURL: URL,
+    token: String?
+  ) async throws -> [GatewayActionApproval] {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/mobile/actions/pending") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(ApprovalsListResponse.self, from: data)
+    return decoded.approvals
+  }
+
+  public func fetchApproval(
+    baseURL: URL,
+    token: String?,
+    approvalID: String
+  ) async throws -> GatewayActionApproval {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/mobile/actions/\(approvalID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(ApprovalDetailResponse.self, from: data)
+    return decoded.approval
+  }
+
+  public func approveAction(
+    baseURL: URL,
+    token: String?,
+    approvalID: String
+  ) async throws -> GatewayActionApproval {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/mobile/actions/\(approvalID)/approve") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(ApprovalDetailResponse.self, from: data)
+    return decoded.approval
+  }
+
+  public func denyAction(
+    baseURL: URL,
+    token: String?,
+    approvalID: String
+  ) async throws -> GatewayActionApproval {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/mobile/actions/\(approvalID)/deny") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(ApprovalDetailResponse.self, from: data)
+    return decoded.approval
+  }
+
   private func validateHTTPResponse(_ response: URLResponse) throws -> HTTPURLResponse {
     guard let httpResponse = response as? HTTPURLResponse else {
       throw GatewayChatError.invalidResponse
@@ -651,4 +818,12 @@ private struct AlertsListResponse: Decodable {
 
 private struct AlertDetailResponse: Decodable {
   let alert: GatewayAlertDetail
+}
+
+private struct ApprovalsListResponse: Decodable {
+  let approvals: [GatewayActionApproval]
+}
+
+private struct ApprovalDetailResponse: Decodable {
+  let approval: GatewayActionApproval
 }

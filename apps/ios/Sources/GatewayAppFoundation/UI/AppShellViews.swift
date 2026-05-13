@@ -20,6 +20,9 @@ public final class GatewayAppViewModel: ObservableObject {
   /// Set this to an alert ID to deep-link into its detail view when the app
   /// is foregrounded from a push notification tap.
   @Published public var pendingAlertID: String?
+  /// Set this to an approval ID to deep-link into its approval card when the
+  /// app is foregrounded from an approval push notification tap.
+  @Published public var pendingApprovalID: String?
 
   private let session: AppSessionController
   let chatClient: GatewayChatServing
@@ -33,6 +36,7 @@ public final class GatewayAppViewModel: ObservableObject {
     self.connectionStatus = .unknown
     self.connectionIdentity = nil
     self.pendingAlertID = nil
+    self.pendingApprovalID = nil
     syncFromSession()
   }
 
@@ -169,14 +173,11 @@ struct MainNavigationView: View {
         }
         .tag(1)
 
-      NavigationStack {
-        Text("Approvals")
-          .navigationTitle("Approvals")
-      }
-      .tabItem {
-        Label("Approvals", systemImage: "checkmark.seal")
-      }
-      .tag(2)
+      ApprovalInboxView(model: model)
+        .tabItem {
+          Label("Approvals", systemImage: "checkmark.seal")
+        }
+        .tag(2)
 
       SettingsView(model: model)
         .tabItem {
@@ -187,6 +188,11 @@ struct MainNavigationView: View {
     .onChange(of: model.pendingAlertID) { _, alertID in
       if alertID != nil {
         selectedTab = 1
+      }
+    }
+    .onChange(of: model.pendingApprovalID) { _, approvalID in
+      if approvalID != nil {
+        selectedTab = 2
       }
     }
   }
@@ -569,6 +575,395 @@ private extension GatewayAlertStatus {
     case .open: return "Open"
     case .acknowledged: return "Acknowledged"
     case .resolved: return "Resolved"
+    }
+  }
+}
+
+// MARK: - Approval Views
+
+/// Colour-coded risk badge for an action approval.
+struct RiskLevelBadge: View {
+  let riskLevel: GatewayApprovalRiskLevel
+
+  var label: String {
+    switch riskLevel {
+    case .critical: return "CRITICAL"
+    case .high: return "HIGH"
+    case .medium: return "MEDIUM"
+    case .low: return "LOW"
+    }
+  }
+
+  var color: Color {
+    switch riskLevel {
+    case .critical: return .red
+    case .high: return .orange
+    case .medium: return .yellow
+    case .low: return .blue
+    }
+  }
+
+  var body: some View {
+    Text(label)
+      .font(.caption2.weight(.bold))
+      .foregroundStyle(.white)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(color)
+      .clipShape(RoundedRectangle(cornerRadius: 4))
+  }
+}
+
+/// A single row in the approval inbox list.
+struct ApprovalRowView: View {
+  let approval: GatewayActionApproval
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 6) {
+        RiskLevelBadge(riskLevel: approval.riskLevelValue)
+        Text(approval.title)
+          .font(.headline)
+          .lineLimit(1)
+        Spacer()
+      }
+      HStack {
+        Text(approval.actionType)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        if let node = approval.targetNode {
+          Text("·")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Text(node)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        Spacer()
+        Text(approval.createdAt.alertFormattedDate())
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .padding(.vertical, 2)
+  }
+}
+
+/// The pending-approvals inbox list view.
+struct ApprovalInboxView: View {
+  @ObservedObject var model: GatewayAppViewModel
+  @State private var approvals: [GatewayActionApproval] = []
+  @State private var isLoading = false
+  @State private var errorMessage: String?
+  @State private var navigationPath = NavigationPath()
+
+  var body: some View {
+    NavigationStack(path: $navigationPath) {
+      Group {
+        if isLoading && approvals.isEmpty {
+          ProgressView("Loading approvals…")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let errorMessage, approvals.isEmpty {
+          VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+              .font(.largeTitle)
+              .foregroundStyle(.red)
+            Text(errorMessage)
+              .multilineTextAlignment(.center)
+              .foregroundStyle(.secondary)
+            Button("Retry") {
+              Task { await loadApprovals() }
+            }
+          }
+          .padding()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if approvals.isEmpty {
+          VStack(spacing: 12) {
+            Image(systemName: "checkmark.seal")
+              .font(.largeTitle)
+              .foregroundStyle(.secondary)
+            Text("No pending approvals")
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+          List(approvals) { approval in
+            NavigationLink(value: approval.id) {
+              ApprovalRowView(approval: approval)
+            }
+          }
+          .refreshable {
+            await loadApprovals()
+          }
+        }
+      }
+      .navigationTitle("Approvals")
+      .navigationDestination(for: String.self) { approvalID in
+        ApprovalCardView(model: model, approvalID: approvalID) {
+          approvals.removeAll { $0.id == approvalID }
+        }
+      }
+    }
+    .task {
+      await loadApprovals()
+    }
+    .onChange(of: model.pendingApprovalID) { _, approvalID in
+      if let approvalID {
+        navigationPath.append(approvalID)
+        model.pendingApprovalID = nil
+      }
+    }
+  }
+
+  private func loadApprovals() async {
+    guard let baseURL = model.gatewayBaseURL else {
+      errorMessage = GatewayChatError.missingConfiguration.localizedDescription
+      return
+    }
+
+    isLoading = true
+    defer { isLoading = false }
+
+    do {
+      approvals = try await model.chatClient.fetchPendingApprovals(
+        baseURL: baseURL,
+        token: model.gatewayToken
+      )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+}
+
+/// Detail card for a single action approval, with approve, deny, and
+/// ask-for-more-details actions.
+struct ApprovalCardView: View {
+  @ObservedObject var model: GatewayAppViewModel
+  let approvalID: String
+  /// Called when the approval is decided so the parent list can remove the row.
+  var onDecided: (() -> Void)?
+
+  @State private var approval: GatewayActionApproval?
+  @State private var isLoading = false
+  @State private var isActioning = false
+  @State private var errorMessage: String?
+  @State private var showAskMoreDetails = false
+  @State private var askMoreDetailsText: String = ""
+
+  var body: some View {
+    Group {
+      if isLoading && approval == nil {
+        ProgressView("Loading…")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if let approval {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 16) {
+            // Header: risk badge + status
+            HStack(spacing: 8) {
+              RiskLevelBadge(riskLevel: approval.riskLevelValue)
+              Text(approval.statusValue.displayLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              Spacer()
+            }
+
+            Text(approval.title)
+              .font(.title2.weight(.semibold))
+
+            Divider()
+
+            // Action metadata
+            Group {
+              LabeledRow(label: "Action Type", value: approval.actionType)
+              if let node = approval.targetNode {
+                LabeledRow(label: "Target Node", value: node)
+              }
+              if let service = approval.targetService {
+                LabeledRow(label: "Target Service", value: service)
+              }
+              if let agent = approval.proposedByAgentId {
+                LabeledRow(label: "Proposed By", value: agent)
+              }
+              LabeledRow(label: "Created", value: approval.createdAt.alertFormattedDate())
+              if let expires = approval.expiresAt {
+                LabeledRow(label: "Expires", value: expires.alertFormattedDate())
+              }
+              if let decidedAt = approval.decidedAt {
+                LabeledRow(label: "Decided", value: decidedAt.alertFormattedDate())
+              }
+              if let decidedBy = approval.decidedBy {
+                LabeledRow(label: "Decided By", value: decidedBy)
+              }
+            }
+
+            // Rationale / description
+            if let description = approval.description, !description.isEmpty {
+              Divider()
+              Text("Rationale")
+                .font(.headline)
+              Text(description)
+                .foregroundStyle(.primary)
+            }
+
+            // Raw metadata
+            if let meta = approval.metadataJson, !meta.isEmpty {
+              Divider()
+              Text("Audit Metadata")
+                .font(.headline)
+              Text(meta)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+            }
+
+            if let errorMessage {
+              Text(errorMessage)
+                .font(.footnote)
+                .foregroundStyle(.red)
+            }
+
+            // Action buttons (only for pending approvals)
+            if approval.statusValue == .pending {
+              Divider()
+              VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                  Button {
+                    Task { await approve() }
+                  } label: {
+                    Label("Approve", systemImage: "checkmark.circle.fill")
+                      .frame(maxWidth: .infinity)
+                  }
+                  .buttonStyle(.borderedProminent)
+                  .tint(.green)
+                  .disabled(isActioning)
+
+                  Button {
+                    Task { await deny() }
+                  } label: {
+                    Label("Deny", systemImage: "xmark.circle.fill")
+                      .frame(maxWidth: .infinity)
+                  }
+                  .buttonStyle(.borderedProminent)
+                  .tint(.red)
+                  .disabled(isActioning)
+                }
+
+                Button {
+                  showAskMoreDetails = true
+                } label: {
+                  Label("Ask for More Details", systemImage: "questionmark.circle")
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isActioning)
+              }
+            }
+          }
+          .padding()
+        }
+      } else if let errorMessage {
+        VStack(spacing: 12) {
+          Image(systemName: "exclamationmark.triangle")
+            .font(.largeTitle)
+            .foregroundStyle(.red)
+          Text(errorMessage)
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.secondary)
+          Button("Retry") {
+            Task { await loadApproval() }
+          }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }
+    .navigationTitle("Action Approval")
+    .navigationBarTitleDisplayMode(.inline)
+    .task {
+      await loadApproval()
+    }
+    .alert("Ask for More Details", isPresented: $showAskMoreDetails) {
+      TextField("Your question…", text: $askMoreDetailsText)
+      Button("Send") {
+        // Placeholder: in a full implementation this would send a follow-up
+        // message to the proposing agent's thread.
+        askMoreDetailsText = ""
+      }
+      Button("Cancel", role: .cancel) {
+        askMoreDetailsText = ""
+      }
+    } message: {
+      Text("Describe what additional information you need before deciding.")
+    }
+  }
+
+  private func loadApproval() async {
+    guard let baseURL = model.gatewayBaseURL else {
+      errorMessage = GatewayChatError.missingConfiguration.localizedDescription
+      return
+    }
+
+    isLoading = true
+    defer { isLoading = false }
+
+    do {
+      approval = try await model.chatClient.fetchApproval(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        approvalID: approvalID
+      )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func approve() async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+
+    isActioning = true
+    defer { isActioning = false }
+
+    do {
+      approval = try await model.chatClient.approveAction(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        approvalID: approvalID
+      )
+      errorMessage = nil
+      onDecided?()
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func deny() async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+
+    isActioning = true
+    defer { isActioning = false }
+
+    do {
+      approval = try await model.chatClient.denyAction(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        approvalID: approvalID
+      )
+      errorMessage = nil
+      onDecided?()
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+}
+
+private extension GatewayApprovalStatus {
+  var displayLabel: String {
+    switch self {
+    case .pending: return "Pending"
+    case .approved: return "Approved"
+    case .denied: return "Denied"
+    case .expired: return "Expired"
     }
   }
 }
