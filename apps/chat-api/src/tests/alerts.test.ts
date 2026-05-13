@@ -20,6 +20,12 @@ vi.mock('../services/apns', () => ({
 const mockAlertFindFirst = vi.fn()
 const mockAlertFindMany = vi.fn()
 const mockAlertUpdate = vi.fn()
+const mockAlertCreate = vi.fn()
+const mockPublishInboxMessage = vi.fn()
+
+vi.mock('../services/inbox', () => ({
+  publishInboxMessage: (...args: unknown[]) => mockPublishInboxMessage(...args),
+}))
 
 vi.mock('../services/db', () => ({
   getPrismaClient: () => ({
@@ -34,6 +40,7 @@ vi.mock('../services/db', () => ({
       findFirst: (...args: unknown[]) => mockAlertFindFirst(...args),
       findMany: (...args: unknown[]) => mockAlertFindMany(...args),
       update: (...args: unknown[]) => mockAlertUpdate(...args),
+      create: (...args: unknown[]) => mockAlertCreate(...args),
     },
   }),
 }))
@@ -71,6 +78,23 @@ beforeEach(() => {
   mockAlertFindFirst.mockResolvedValue(ALERT_ROW)
   mockAlertFindMany.mockResolvedValue([ALERT_ROW])
   mockAlertUpdate.mockResolvedValue({ ...ALERT_ROW, status: 'acknowledged', acknowledgedAt: new Date() })
+  mockAlertCreate.mockImplementation(async ({ data }: { data: typeof ALERT_ROW }) => ({
+    ...data,
+    relatedThreadId: null,
+    relatedActionId: null,
+    acknowledgedAt: null,
+    resolvedAt: null,
+  }))
+  mockPublishInboxMessage.mockResolvedValue({
+    id: 'inbox-1',
+    userId: 'alice',
+    channelId: 'alerts',
+    agentId: 'system-alerts',
+    content: ALERT_ROW.body,
+    createdAt: new Date().toISOString(),
+    kind: 'alert',
+    read: false,
+  })
 })
 
 describe('GET /api/mobile/alerts', () => {
@@ -282,5 +306,151 @@ describe('POST /api/mobile/alerts/:id/resolve', () => {
 
     expect(res.statusCode).toBe(200)
     expect(mockAlertUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/mobile/alerts/events', () => {
+  it('creates a new alert and publishes a notification with mapped severity', async () => {
+    mockAlertFindMany.mockResolvedValue([])
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/mobile/alerts/events',
+      headers: { 'x-user-id': 'alice' },
+      payload: {
+        source: 'home-lab',
+        sourceNode: 'node-2',
+        sourceService: 'prometheus',
+        eventType: 'cpu_spike',
+        level: 'warning',
+        title: 'CPU spike on node-2',
+        message: 'CPU exceeded 90%',
+      },
+    })
+
+    expect(res.statusCode).toBe(201)
+    const body = JSON.parse(res.payload)
+    expect(body.created).toBe(true)
+    expect(body.deduplicated).toBe(false)
+    expect(mockAlertCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'alice',
+          source: 'homelab',
+          severity: 'medium',
+          title: 'CPU spike on node-2',
+        }),
+      }),
+    )
+    expect(mockPublishInboxMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'alice',
+        channelId: 'alerts',
+        kind: 'alert',
+      }),
+    )
+  })
+
+  it('deduplicates repeated events and updates duplicate metadata', async () => {
+    const existing = {
+      ...ALERT_ROW,
+      title: 'Nginx down',
+      source: 'gateway',
+      sourceService: 'nginx',
+      metadataJson: JSON.stringify({
+        dedupKey: 'gateway|node-1|nginx|service_down|nginx down|',
+        duplicateCount: 1,
+      }),
+    }
+    mockAlertFindMany.mockResolvedValue([existing])
+    mockAlertUpdate.mockResolvedValue({
+      ...existing,
+      metadataJson: JSON.stringify({
+        dedupKey: 'gateway|node-1|nginx|service_down|nginx down|',
+        duplicateCount: 2,
+      }),
+    })
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/mobile/alerts/events',
+      headers: { 'x-user-id': 'alice' },
+      payload: {
+        source: 'gateway',
+        sourceNode: 'node-1',
+        sourceService: 'nginx',
+        eventType: 'service_down',
+        severity: 'error',
+        title: 'Nginx down',
+        dedupKey: 'gateway|node-1|nginx|service_down|nginx down|',
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.created).toBe(false)
+    expect(body.deduplicated).toBe(true)
+    expect(mockAlertCreate).not.toHaveBeenCalled()
+    expect(mockAlertUpdate).toHaveBeenCalled()
+    expect(mockPublishInboxMessage).not.toHaveBeenCalled()
+  })
+
+  it('re-opens and notifies when deduplicated event escalates severity', async () => {
+    const existing = {
+      ...ALERT_ROW,
+      title: 'Disk full',
+      severity: 'low',
+      status: 'acknowledged',
+      acknowledgedAt: new Date('2026-05-13T00:05:00.000Z'),
+      metadataJson: JSON.stringify({
+        dedupKey: 'homelab|node-1|prometheus|disk_full|disk full|',
+        duplicateCount: 3,
+      }),
+    }
+    mockAlertFindMany.mockResolvedValue([existing])
+    mockAlertUpdate.mockResolvedValue({
+      ...existing,
+      status: 'open',
+      severity: 'critical',
+      acknowledgedAt: null,
+    })
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/mobile/alerts/events',
+      headers: { 'x-user-id': 'alice' },
+      payload: {
+        source: 'homelab',
+        sourceNode: 'node-1',
+        sourceService: 'prometheus',
+        eventType: 'disk_full',
+        severity: 'critical',
+        title: 'Disk full',
+        dedupKey: 'homelab|node-1|prometheus|disk_full|disk full|',
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload)
+    expect(body.escalated).toBe(true)
+    expect(mockAlertUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          severity: 'critical',
+          status: 'open',
+          acknowledgedAt: null,
+        }),
+      }),
+    )
+    expect(mockPublishInboxMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'alice',
+        channelId: 'alerts',
+        kind: 'alert',
+      }),
+    )
   })
 })

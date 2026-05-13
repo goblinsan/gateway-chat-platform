@@ -145,6 +145,7 @@ pnpm --filter @gateway/chat-ui preview
 | `GET` | `/api/providers/:name/models` | List loaded models for one configured provider |
 | `GET` | `/api/health` | Service health and uptime |
 | `POST` | `/api/session/mobile-devices/apns` | Register iOS APNs device token for the current user |
+| `POST` | `/api/mobile/alerts/events` | Ingest gateway/home-lab events into alerts with severity mapping + dedup |
 | `POST` | `/api/agents/:id/run` | Non-interactive automation run (scheduler / control-plane) |
 | `GET` | `/api/tts/health` | TTS service health and upstream status |
 | `GET` | `/api/tts/voices` | List available TTS voices |
