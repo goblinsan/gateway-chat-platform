@@ -19,13 +19,14 @@ export default async function mobileRoutes(app: FastifyInstance) {
    *   - If APNs reports a stale/invalid token (BadDeviceToken or Unregistered),
    *     the device is disabled so future deliveries skip it.
    */
-  app.post<{ Body: { title?: string; body?: string } }>(
+  app.post<{ Body: { title?: string; body?: string; apnsToken?: string } }>(
     '/mobile/push/test',
     {
       schema: {
         body: {
           type: 'object',
           properties: {
+            apnsToken: { type: 'string', minLength: 1, maxLength: 1024 },
             title: { type: 'string', minLength: 1, maxLength: 256 },
             body: { type: 'string', minLength: 1, maxLength: 1024 },
           },
@@ -56,8 +57,7 @@ export default async function mobileRoutes(app: FastifyInstance) {
       // stored device.  Since we only store the hash (not the raw token),
       // the test endpoint needs the raw token from the client.
       // We accept it as an optional field — if omitted we return 422.
-      const rawBody = req.body as { title?: string; body?: string; apnsToken?: string }
-      const rawToken: string | undefined = rawBody.apnsToken
+      const rawToken = req.body.apnsToken
 
       if (!rawToken) {
         return reply.status(422).send({
@@ -72,8 +72,8 @@ export default async function mobileRoutes(app: FastifyInstance) {
       }
 
       const alertId = randomUUID()
-      const title = rawBody.title ?? 'Gateway Test'
-      const bodyText = rawBody.body ?? 'This is a test notification from your Gateway server.'
+      const title = req.body.title ?? 'Gateway Test'
+      const bodyText = req.body.body ?? 'This is a test notification from your Gateway server.'
 
       let pushResult: Awaited<ReturnType<typeof sendApnsNotification>>
       try {

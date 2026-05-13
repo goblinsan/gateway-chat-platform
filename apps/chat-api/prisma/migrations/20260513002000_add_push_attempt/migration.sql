@@ -1,5 +1,5 @@
 -- AlterTable: add enabled column to MobileDevice
-ALTER TABLE "MobileDevice" ADD COLUMN "enabled" BOOLEAN NOT NULL DEFAULT 1;
+ALTER TABLE "MobileDevice" ADD COLUMN "enabled" BOOLEAN NOT NULL DEFAULT true;
 
 -- CreateTable
 CREATE TABLE "PushAttempt" (
