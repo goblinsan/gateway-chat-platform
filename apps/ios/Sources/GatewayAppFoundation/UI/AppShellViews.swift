@@ -17,6 +17,9 @@ public final class GatewayAppViewModel: ObservableObject {
   @Published public var deviceName: String
   @Published public var connectionStatus: GatewayConnectionStatus
   @Published public var connectionIdentity: String?
+  /// Set this to an alert ID to deep-link into its detail view when the app
+  /// is foregrounded from a push notification tap.
+  @Published public var pendingAlertID: String?
 
   private let session: AppSessionController
   let chatClient: GatewayChatServing
@@ -29,6 +32,7 @@ public final class GatewayAppViewModel: ObservableObject {
     self.apiToken = ""
     self.connectionStatus = .unknown
     self.connectionIdentity = nil
+    self.pendingAlertID = nil
     syncFromSession()
   }
 
@@ -149,21 +153,21 @@ struct SetupView: View {
 
 struct MainNavigationView: View {
   @ObservedObject var model: GatewayAppViewModel
+  @State private var selectedTab: Int = 0
 
   var body: some View {
-    TabView {
+    TabView(selection: $selectedTab) {
       ChatView(model: model)
-      .tabItem {
-        Label("Chat", systemImage: "bubble.left.and.bubble.right")
-      }
+        .tabItem {
+          Label("Chat", systemImage: "bubble.left.and.bubble.right")
+        }
+        .tag(0)
 
-      NavigationStack {
-        Text("Alerts")
-          .navigationTitle("Alerts")
-      }
-      .tabItem {
-        Label("Alerts", systemImage: "bell")
-      }
+      AlertInboxView(model: model)
+        .tabItem {
+          Label("Alerts", systemImage: "bell")
+        }
+        .tag(1)
 
       NavigationStack {
         Text("Approvals")
@@ -172,12 +176,418 @@ struct MainNavigationView: View {
       .tabItem {
         Label("Approvals", systemImage: "checkmark.seal")
       }
+      .tag(2)
 
       SettingsView(model: model)
         .tabItem {
           Label("Settings", systemImage: "gear")
         }
+        .tag(3)
     }
+    .onChange(of: model.pendingAlertID) { _, alertID in
+      if alertID != nil {
+        selectedTab = 1
+      }
+    }
+  }
+}
+
+// MARK: - Alert Views
+
+/// Colour-coded badge label for a severity level.
+struct SeverityBadge: View {
+  let severity: GatewayAlertSeverity
+
+  var label: String {
+    switch severity {
+    case .critical: return "CRITICAL"
+    case .high: return "HIGH"
+    case .medium: return "MEDIUM"
+    case .low: return "LOW"
+    case .info: return "INFO"
+    }
+  }
+
+  var color: Color {
+    switch severity {
+    case .critical: return .red
+    case .high: return .orange
+    case .medium: return .yellow
+    case .low: return .blue
+    case .info: return .gray
+    }
+  }
+
+  var body: some View {
+    Text(label)
+      .font(.caption2.weight(.bold))
+      .foregroundStyle(.white)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(color)
+      .clipShape(RoundedRectangle(cornerRadius: 4))
+  }
+}
+
+/// A single row in the alert inbox list.
+struct AlertRowView: View {
+  let alert: GatewayAlertSummary
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 6) {
+        SeverityBadge(severity: alert.severityLevel)
+        Text(alert.title)
+          .font(.headline)
+          .lineLimit(1)
+        Spacer()
+      }
+      HStack {
+        Text(alert.source)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        if let node = alert.sourceNode {
+          Text("·")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Text(node)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        Spacer()
+        Text(alert.createdAt.alertFormattedDate())
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .padding(.vertical, 2)
+  }
+}
+
+/// The main alert inbox list view.
+struct AlertInboxView: View {
+  @ObservedObject var model: GatewayAppViewModel
+  @State private var alerts: [GatewayAlertSummary] = []
+  @State private var selectedStatus: GatewayAlertStatus = .open
+  @State private var isLoading = false
+  @State private var errorMessage: String?
+  @State private var selectedAlertID: String?
+  @State private var navigationPath = NavigationPath()
+
+  var body: some View {
+    NavigationStack(path: $navigationPath) {
+      Group {
+        if isLoading && alerts.isEmpty {
+          ProgressView("Loading alerts…")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let errorMessage, alerts.isEmpty {
+          VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+              .font(.largeTitle)
+              .foregroundStyle(.red)
+            Text(errorMessage)
+              .multilineTextAlignment(.center)
+              .foregroundStyle(.secondary)
+            Button("Retry") {
+              Task { await loadAlerts() }
+            }
+          }
+          .padding()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if alerts.isEmpty {
+          VStack(spacing: 12) {
+            Image(systemName: "bell.slash")
+              .font(.largeTitle)
+              .foregroundStyle(.secondary)
+            Text("No \(selectedStatus.rawValue) alerts")
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+          List(alerts) { alert in
+            NavigationLink(value: alert.id) {
+              AlertRowView(alert: alert)
+            }
+          }
+          .refreshable {
+            await loadAlerts()
+          }
+        }
+      }
+      .navigationTitle("Alerts")
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Picker("Status", selection: $selectedStatus) {
+            Text("Open").tag(GatewayAlertStatus.open)
+            Text("Ack'd").tag(GatewayAlertStatus.acknowledged)
+            Text("Resolved").tag(GatewayAlertStatus.resolved)
+          }
+          .pickerStyle(.segmented)
+          .frame(minWidth: 180)
+        }
+      }
+      .navigationDestination(for: String.self) { alertID in
+        AlertDetailView(model: model, alertID: alertID)
+      }
+    }
+    .task {
+      await loadAlerts()
+    }
+    .onChange(of: selectedStatus) { _, _ in
+      Task { await loadAlerts() }
+    }
+    .onChange(of: model.pendingAlertID) { _, alertID in
+      if let alertID {
+        navigationPath.append(alertID)
+        model.pendingAlertID = nil
+      }
+    }
+  }
+
+  private func loadAlerts() async {
+    guard let baseURL = model.gatewayBaseURL else {
+      errorMessage = GatewayChatError.missingConfiguration.localizedDescription
+      return
+    }
+
+    isLoading = true
+    defer { isLoading = false }
+
+    do {
+      alerts = try await model.chatClient.fetchAlerts(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        status: selectedStatus,
+        limit: 50,
+        before: nil
+      )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+}
+
+/// Detail view for a single alert, with acknowledge and resolve actions.
+struct AlertDetailView: View {
+  @ObservedObject var model: GatewayAppViewModel
+  let alertID: String
+
+  @State private var alert: GatewayAlertDetail?
+  @State private var isLoading = false
+  @State private var isActioning = false
+  @State private var errorMessage: String?
+
+  var body: some View {
+    Group {
+      if isLoading && alert == nil {
+        ProgressView("Loading…")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if let alert {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+              SeverityBadge(severity: alert.severityLevel)
+              Text(alert.statusLevel.displayLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              Spacer()
+            }
+
+            Text(alert.title)
+              .font(.title2.weight(.semibold))
+
+            Divider()
+
+            Group {
+              LabeledRow(label: "Source", value: alert.source)
+              if let node = alert.sourceNode {
+                LabeledRow(label: "Node", value: node)
+              }
+              if let service = alert.sourceService {
+                LabeledRow(label: "Service", value: service)
+              }
+              LabeledRow(label: "Created", value: alert.createdAt.alertFormattedDate())
+              if let ack = alert.acknowledgedAt {
+                LabeledRow(label: "Acknowledged", value: ack.alertFormattedDate())
+              }
+              if let res = alert.resolvedAt {
+                LabeledRow(label: "Resolved", value: res.alertFormattedDate())
+              }
+            }
+
+            if let body = alert.body, !body.isEmpty {
+              Divider()
+              Text("Summary")
+                .font(.headline)
+              Text(body)
+                .foregroundStyle(.primary)
+            }
+
+            if let meta = alert.metadataJson, !meta.isEmpty {
+              Divider()
+              Text("Metadata")
+                .font(.headline)
+              Text(meta)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+            }
+
+            if let errorMessage {
+              Text(errorMessage)
+                .font(.footnote)
+                .foregroundStyle(.red)
+            }
+
+            if alert.statusLevel != .resolved {
+              Divider()
+              HStack(spacing: 12) {
+                if alert.statusLevel == .open {
+                  Button {
+                    Task { await acknowledge() }
+                  } label: {
+                    Label("Acknowledge", systemImage: "checkmark.circle")
+                      .frame(maxWidth: .infinity)
+                  }
+                  .buttonStyle(.borderedProminent)
+                  .disabled(isActioning)
+                }
+
+                Button {
+                  Task { await resolve() }
+                } label: {
+                  Label("Resolve", systemImage: "checkmark.seal")
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isActioning)
+              }
+            }
+          }
+          .padding()
+        }
+      } else if let errorMessage {
+        VStack(spacing: 12) {
+          Image(systemName: "exclamationmark.triangle")
+            .font(.largeTitle)
+            .foregroundStyle(.red)
+          Text(errorMessage)
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.secondary)
+          Button("Retry") {
+            Task { await loadAlert() }
+          }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }
+    .navigationTitle("Alert Detail")
+    .navigationBarTitleDisplayMode(.inline)
+    .task {
+      await loadAlert()
+    }
+  }
+
+  private func loadAlert() async {
+    guard let baseURL = model.gatewayBaseURL else {
+      errorMessage = GatewayChatError.missingConfiguration.localizedDescription
+      return
+    }
+
+    isLoading = true
+    defer { isLoading = false }
+
+    do {
+      alert = try await model.chatClient.fetchAlert(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        alertID: alertID
+      )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func acknowledge() async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+
+    isActioning = true
+    defer { isActioning = false }
+
+    do {
+      alert = try await model.chatClient.acknowledgeAlert(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        alertID: alertID
+      )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func resolve() async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+
+    isActioning = true
+    defer { isActioning = false }
+
+    do {
+      alert = try await model.chatClient.resolveAlert(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        alertID: alertID
+      )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+}
+
+private struct LabeledRow: View {
+  let label: String
+  let value: String
+
+  var body: some View {
+    HStack(alignment: .top) {
+      Text(label)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(width: 90, alignment: .leading)
+      Text(value)
+        .font(.body)
+    }
+  }
+}
+
+private extension GatewayAlertStatus {
+  var displayLabel: String {
+    switch self {
+    case .open: return "Open"
+    case .acknowledged: return "Acknowledged"
+    case .resolved: return "Resolved"
+    }
+  }
+}
+
+private extension String {
+  /// Formats an ISO-8601 date string for display in the alert views.
+  /// Falls back to the raw string if parsing fails.
+  func alertFormattedDate() -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: self) {
+      return date.formatted(date: .abbreviated, time: .shortened)
+    }
+    // Try without fractional seconds
+    formatter.formatOptions = [.withInternetDateTime]
+    if let date = formatter.date(from: self) {
+      return date.formatted(date: .abbreviated, time: .shortened)
+    }
+    return self
   }
 }
 

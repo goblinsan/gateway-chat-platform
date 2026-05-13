@@ -10,6 +10,72 @@ public struct GatewayAgentSummary: Decodable, Equatable, Identifiable {
   public let enabled: Bool?
 }
 
+// MARK: - Alert models
+
+/// Severity level for a gateway alert.
+public enum GatewayAlertSeverity: String, Decodable, Equatable, CaseIterable, Sendable {
+  case critical
+  case high
+  case medium
+  case low
+  case info
+}
+
+/// Status of a gateway alert.
+public enum GatewayAlertStatus: String, Decodable, Equatable, CaseIterable, Sendable {
+  case open
+  case acknowledged
+  case resolved
+}
+
+/// Summary fields returned by the alert list endpoint.
+public struct GatewayAlertSummary: Decodable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let title: String
+  public let severity: String
+  public let source: String
+  public let sourceNode: String?
+  public let sourceService: String?
+  public let status: String
+  public let createdAt: String
+  public let acknowledgedAt: String?
+  public let resolvedAt: String?
+
+  public var severityLevel: GatewayAlertSeverity {
+    GatewayAlertSeverity(rawValue: severity) ?? .info
+  }
+
+  public var statusLevel: GatewayAlertStatus {
+    GatewayAlertStatus(rawValue: status) ?? .open
+  }
+}
+
+/// Full alert detail returned by the single-alert endpoint.
+public struct GatewayAlertDetail: Decodable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let title: String
+  public let body: String?
+  public let severity: String
+  public let source: String
+  public let sourceNode: String?
+  public let sourceService: String?
+  public let status: String
+  public let relatedThreadId: String?
+  public let relatedActionId: String?
+  public let metadataJson: String?
+  public let createdAt: String
+  public let acknowledgedAt: String?
+  public let resolvedAt: String?
+
+  public var severityLevel: GatewayAlertSeverity {
+    GatewayAlertSeverity(rawValue: severity) ?? .info
+  }
+
+  public var statusLevel: GatewayAlertStatus {
+    GatewayAlertStatus(rawValue: status) ?? .open
+  }
+}
+
 /// A single event emitted by the `/api/chat/stream` SSE endpoint.
 public enum GatewayStreamEvent: Equatable, Sendable {
   /// A text token from the assistant response.
@@ -83,6 +149,36 @@ public protocol GatewayChatServing {
     threadID: String?,
     deviceName: String?
   ) async throws -> AsyncThrowingStream<GatewayStreamEvent, Error>
+
+  /// Fetch a page of alerts for the authenticated user.
+  func fetchAlerts(
+    baseURL: URL,
+    token: String?,
+    status: GatewayAlertStatus,
+    limit: Int,
+    before: String?
+  ) async throws -> [GatewayAlertSummary]
+
+  /// Fetch the full detail for a single alert.
+  func fetchAlert(
+    baseURL: URL,
+    token: String?,
+    alertID: String
+  ) async throws -> GatewayAlertDetail
+
+  /// Acknowledge an alert (mark it as read/actioned).
+  func acknowledgeAlert(
+    baseURL: URL,
+    token: String?,
+    alertID: String
+  ) async throws -> GatewayAlertDetail
+
+  /// Resolve an alert.
+  func resolveAlert(
+    baseURL: URL,
+    token: String?,
+    alertID: String
+  ) async throws -> GatewayAlertDetail
 }
 
 public enum GatewayChatError: LocalizedError, Equatable {
@@ -365,6 +461,114 @@ public final class GatewayChatClient: GatewayChatServing {
     }
   }
 
+  // MARK: - Alert endpoints
+
+  public func fetchAlerts(
+    baseURL: URL,
+    token: String?,
+    status: GatewayAlertStatus = .open,
+    limit: Int = 20,
+    before: String? = nil
+  ) async throws -> [GatewayAlertSummary] {
+    var components = URLComponents()
+    components.queryItems = [
+      URLQueryItem(name: "status", value: status.rawValue),
+      URLQueryItem(name: "limit", value: String(limit)),
+    ]
+    if let before {
+      components.queryItems?.append(URLQueryItem(name: "before", value: before))
+    }
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/mobile/alerts") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var urlWithQuery = url
+    if let query = components.percentEncodedQuery {
+      urlWithQuery = URL(string: url.absoluteString + "?" + query) ?? url
+    }
+
+    var request = URLRequest(url: urlWithQuery)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(AlertsListResponse.self, from: data)
+    return decoded.alerts
+  }
+
+  public func fetchAlert(
+    baseURL: URL,
+    token: String?,
+    alertID: String
+  ) async throws -> GatewayAlertDetail {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/mobile/alerts/\(alertID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(AlertDetailResponse.self, from: data)
+    return decoded.alert
+  }
+
+  public func acknowledgeAlert(
+    baseURL: URL,
+    token: String?,
+    alertID: String
+  ) async throws -> GatewayAlertDetail {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/mobile/alerts/\(alertID)/ack") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(AlertDetailResponse.self, from: data)
+    return decoded.alert
+  }
+
+  public func resolveAlert(
+    baseURL: URL,
+    token: String?,
+    alertID: String
+  ) async throws -> GatewayAlertDetail {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/mobile/alerts/\(alertID)/resolve") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await perform(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(AlertDetailResponse.self, from: data)
+    return decoded.alert
+  }
+
   private func validateHTTPResponse(_ response: URLResponse) throws -> HTTPURLResponse {
     guard let httpResponse = response as? HTTPURLResponse else {
       throw GatewayChatError.invalidResponse
@@ -439,4 +643,12 @@ private struct ChatResponsePayload: Decodable {
 private struct APIErrorPayload: Decodable {
   let error: String?
   let message: String?
+}
+
+private struct AlertsListResponse: Decodable {
+  let alerts: [GatewayAlertSummary]
+}
+
+private struct AlertDetailResponse: Decodable {
+  let alert: GatewayAlertDetail
 }

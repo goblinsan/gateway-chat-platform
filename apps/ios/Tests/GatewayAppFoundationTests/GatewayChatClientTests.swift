@@ -323,6 +323,137 @@ final class GatewayChatClientTests: XCTestCase {
     config.protocolClasses = [URLProtocolStub.self]
     return URLSession(configuration: config)
   }
+
+  // MARK: - Alert endpoint tests
+
+  func testFetchAlertsDecodesAlertList() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/mobile/alerts")
+      XCTAssertEqual(request.httpMethod, "GET")
+      let query = request.url?.query ?? ""
+      XCTAssertTrue(query.contains("status=open"), "Expected status=open in query: \(query)")
+      XCTAssertTrue(query.contains("limit=20"), "Expected limit=20 in query: \(query)")
+      let body = """
+      {"alerts":[{"id":"a1","title":"CPU spike","severity":"high","source":"homelab","sourceNode":"node-1","sourceService":"prometheus","status":"open","createdAt":"2026-05-13T00:00:00.000Z","acknowledgedAt":null,"resolvedAt":null}]}
+      """
+      return (200, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let alerts = try await client.fetchAlerts(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      status: .open,
+      limit: 20,
+      before: nil
+    )
+
+    XCTAssertEqual(alerts.count, 1)
+    XCTAssertEqual(alerts[0].id, "a1")
+    XCTAssertEqual(alerts[0].severityLevel, .high)
+    XCTAssertEqual(alerts[0].statusLevel, .open)
+  }
+
+  func testFetchAlertDetail() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/mobile/alerts/a1")
+      XCTAssertEqual(request.httpMethod, "GET")
+      let body = """
+      {"alert":{"id":"a1","title":"CPU spike","body":"CPU exceeded 90%.","severity":"high","source":"homelab","sourceNode":"node-1","sourceService":"prometheus","status":"open","relatedThreadId":null,"relatedActionId":null,"metadataJson":null,"createdAt":"2026-05-13T00:00:00.000Z","acknowledgedAt":null,"resolvedAt":null}}
+      """
+      return (200, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let detail = try await client.fetchAlert(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      alertID: "a1"
+    )
+
+    XCTAssertEqual(detail.id, "a1")
+    XCTAssertEqual(detail.body, "CPU exceeded 90%.")
+    XCTAssertEqual(detail.severityLevel, .high)
+  }
+
+  func testAcknowledgeAlertPostsToAckEndpoint() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/mobile/alerts/a1/ack")
+      XCTAssertEqual(request.httpMethod, "POST")
+      let body = """
+      {"alert":{"id":"a1","title":"CPU spike","body":null,"severity":"high","source":"homelab","sourceNode":null,"sourceService":null,"status":"acknowledged","relatedThreadId":null,"relatedActionId":null,"metadataJson":null,"createdAt":"2026-05-13T00:00:00.000Z","acknowledgedAt":"2026-05-13T01:00:00.000Z","resolvedAt":null}}
+      """
+      return (200, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let updated = try await client.acknowledgeAlert(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      alertID: "a1"
+    )
+
+    XCTAssertEqual(updated.statusLevel, .acknowledged)
+    XCTAssertNotNil(updated.acknowledgedAt)
+  }
+
+  func testResolveAlertPostsToResolveEndpoint() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/mobile/alerts/a1/resolve")
+      XCTAssertEqual(request.httpMethod, "POST")
+      let body = """
+      {"alert":{"id":"a1","title":"CPU spike","body":null,"severity":"high","source":"homelab","sourceNode":null,"sourceService":null,"status":"resolved","relatedThreadId":null,"relatedActionId":null,"metadataJson":null,"createdAt":"2026-05-13T00:00:00.000Z","acknowledgedAt":null,"resolvedAt":"2026-05-13T02:00:00.000Z"}}
+      """
+      return (200, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let updated = try await client.resolveAlert(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      alertID: "a1"
+    )
+
+    XCTAssertEqual(updated.statusLevel, .resolved)
+    XCTAssertNotNil(updated.resolvedAt)
+  }
+
+  func testFetchAlertsPassesBeforeCursor() async throws {
+    URLProtocolStub.handler = { request in
+      let query = request.url?.query ?? ""
+      XCTAssertTrue(query.contains("before=2026-05-13"), "Expected before cursor in query: \(query)")
+      let body = "{\"alerts\":[]}"
+      return (200, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let alerts = try await client.fetchAlerts(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: nil,
+      status: .open,
+      limit: 10,
+      before: "2026-05-13T00:00:00.000Z"
+    )
+    XCTAssertEqual(alerts.count, 0)
+  }
+
+  func testFetchAlertsMapsHttpError() async throws {
+    URLProtocolStub.handler = { _ in
+      return (401, Data("{\"error\":\"Unauthorized\"}".utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    do {
+      _ = try await client.fetchAlerts(
+        baseURL: URL(string: "https://gateway.example.com")!,
+        token: nil,
+        status: .open
+      )
+      XCTFail("Expected HTTP error")
+    } catch let error as GatewayChatError {
+      XCTAssertEqual(error, .httpError(401, "Unauthorized"))
+    }
+  }
 }
 
 private final class URLProtocolStub: URLProtocol {
