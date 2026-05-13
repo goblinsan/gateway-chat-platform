@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify'
 import { getPrismaClient } from '../services/db'
 import { sendApnsNotification, isApnsConfigured } from '../services/apns'
 
+const ALERT_PAGE_LIMIT = 50
+
 export default async function mobileRoutes(app: FastifyInstance) {
   const prisma = getPrismaClient()
 
@@ -81,7 +83,7 @@ export default async function mobileRoutes(app: FastifyInstance) {
           title,
           body: bodyText,
           collapseId: `test-${req.userId}`,
-          data: { alertId },
+          data: { alertId, route: 'alert' },
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
@@ -155,6 +157,145 @@ export default async function mobileRoutes(app: FastifyInstance) {
         alertId,
         deviceId: device.id,
       })
+    },
+  )
+
+  /**
+   * GET /api/mobile/alerts
+   *
+   * Lists alerts for the authenticated user. Supports optional `status` filter
+   * and cursor-based pagination via `before` (ISO timestamp).
+   *
+   * Query parameters:
+   *   - status: "open" | "acknowledged" | "resolved" (default: "open")
+   *   - limit: number 1–50 (default: 20)
+   *   - before: ISO timestamp for cursor-based pagination
+   */
+  app.get<{
+    Querystring: { status?: string; limit?: string; before?: string }
+  }>(
+    '/mobile/alerts',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['open', 'acknowledged', 'resolved'] },
+            limit: { type: 'string' },
+            before: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const status = req.query.status ?? 'open'
+      const rawLimit = parseInt(req.query.limit ?? '20', 10)
+      const limit = isNaN(rawLimit) || rawLimit < 1 ? 20 : Math.min(rawLimit, ALERT_PAGE_LIMIT)
+      const before = req.query.before ? new Date(req.query.before) : undefined
+
+      const alerts = await prisma.alert.findMany({
+        where: {
+          userId: req.userId,
+          status,
+          ...(before ? { createdAt: { lt: before } } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          title: true,
+          severity: true,
+          source: true,
+          sourceNode: true,
+          sourceService: true,
+          status: true,
+          createdAt: true,
+          acknowledgedAt: true,
+          resolvedAt: true,
+        },
+      })
+
+      return reply.send({ alerts })
+    },
+  )
+
+  /**
+   * GET /api/mobile/alerts/:id
+   *
+   * Returns the full detail for a single alert owned by the authenticated user.
+   */
+  app.get<{ Params: { id: string } }>(
+    '/mobile/alerts/:id',
+    async (req, reply) => {
+      const alert = await prisma.alert.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+      })
+
+      if (!alert) {
+        return reply.status(404).send({ error: 'Alert not found' })
+      }
+
+      return reply.send({ alert })
+    },
+  )
+
+  /**
+   * POST /api/mobile/alerts/:id/ack
+   *
+   * Marks the alert as acknowledged and records the timestamp.
+   * No-ops gracefully if the alert is already acknowledged or resolved.
+   */
+  app.post<{ Params: { id: string } }>(
+    '/mobile/alerts/:id/ack',
+    async (req, reply) => {
+      const existing = await prisma.alert.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+      })
+
+      if (!existing) {
+        return reply.status(404).send({ error: 'Alert not found' })
+      }
+
+      if (existing.status !== 'open') {
+        return reply.send({ alert: existing })
+      }
+
+      const updated = await prisma.alert.update({
+        where: { id: req.params.id },
+        data: { status: 'acknowledged', acknowledgedAt: new Date() },
+      })
+
+      return reply.send({ alert: updated })
+    },
+  )
+
+  /**
+   * POST /api/mobile/alerts/:id/resolve
+   *
+   * Marks the alert as resolved and records the timestamp.
+   * No-ops gracefully if the alert is already resolved.
+   */
+  app.post<{ Params: { id: string } }>(
+    '/mobile/alerts/:id/resolve',
+    async (req, reply) => {
+      const existing = await prisma.alert.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+      })
+
+      if (!existing) {
+        return reply.status(404).send({ error: 'Alert not found' })
+      }
+
+      if (existing.status === 'resolved') {
+        return reply.send({ alert: existing })
+      }
+
+      const updated = await prisma.alert.update({
+        where: { id: req.params.id },
+        data: { status: 'resolved', resolvedAt: new Date() },
+      })
+
+      return reply.send({ alert: updated })
     },
   )
 }
