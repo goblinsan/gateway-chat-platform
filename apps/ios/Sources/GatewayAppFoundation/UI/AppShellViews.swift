@@ -5,6 +5,10 @@ import UIKit
 #elseif canImport(AppKit)
 import AppKit
 #endif
+#if canImport(Speech)
+import Speech
+import AVFoundation
+#endif
 
 @MainActor
 public final class GatewayAppViewModel: ObservableObject {
@@ -188,6 +192,9 @@ struct ChatView: View {
   @State private var isSending = false
   @State private var errorMessage: String?
   @State private var streamingTask: Task<Void, Never>?
+  #if canImport(Speech)
+  @StateObject private var speechController = SpeechRecognitionController()
+  #endif
 
   // Fall back to the first item from the latest loaded agent list when no explicit selection is made.
   private var fallbackAgentID: String? {
@@ -253,6 +260,31 @@ struct ChatView: View {
             .textInputAutocapitalization(.sentences)
             .autocorrectionDisabled(false)
 
+          #if canImport(Speech)
+          Button {
+            Task {
+              if speechController.isRecording {
+                speechController.stopRecording()
+              } else {
+                await speechController.requestPermissions()
+                guard speechController.recognitionState != .permissionDenied,
+                      speechController.recognitionState != .unavailable
+                else { return }
+                do {
+                  try speechController.startRecording()
+                } catch {
+                  errorMessage = error.localizedDescription
+                }
+              }
+            }
+          } label: {
+            Image(systemName: speechController.isRecording ? "stop.circle.fill" : "mic.circle")
+              .imageScale(.large)
+          }
+          .disabled(isSending)
+          .foregroundStyle(speechController.isRecording ? Color.red : Color.secondary)
+          #endif
+
           if isSending {
             Button("Cancel") {
               streamingTask?.cancel()
@@ -271,6 +303,25 @@ struct ChatView: View {
       }
       .padding()
       .navigationTitle("Chat")
+      #if canImport(Speech)
+      .onChange(of: speechController.isRecording) { _, isNowRecording in
+        if !isNowRecording, !speechController.transcript.isEmpty {
+          prompt = speechController.transcript
+        }
+      }
+      .onChange(of: speechController.recognitionState) { _, newState in
+        switch newState {
+        case .permissionDenied:
+          errorMessage = "Microphone or speech recognition permission denied. Enable access in Settings."
+        case .unavailable:
+          errorMessage = "Speech recognition is not available on this device."
+        case .failed(let msg):
+          errorMessage = msg
+        default:
+          break
+        }
+      }
+      #endif
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
           Button("Reload Agents") {
