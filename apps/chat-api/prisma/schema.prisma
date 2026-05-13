@@ -155,3 +155,24 @@ model Alert {
   @@index([userId, status])
   @@index([userId, createdAt])
 }
+
+model ActionApproval {
+  id                String    @id @default(uuid())
+  userId            String
+  title             String
+  description       String?
+  riskLevel         String    @default("medium")  // "critical" | "high" | "medium" | "low"
+  actionType        String
+  targetNode        String?
+  targetService     String?
+  proposedByAgentId String?
+  status            String    @default("pending")  // "pending" | "approved" | "denied" | "expired"
+  expiresAt         DateTime?
+  createdAt         DateTime  @default(now())
+  decidedAt         DateTime?
+  decidedBy         String?
+  metadataJson      String?
+
+  @@index([userId, status])
+  @@index([userId, createdAt])
+}
