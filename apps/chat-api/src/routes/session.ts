@@ -13,6 +13,12 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
+function getDeviceName(headerValue: unknown, bodyValue?: string): string {
+  const headerDeviceName = typeof headerValue === 'string' ? headerValue.trim() : ''
+  const bodyDeviceName = bodyValue?.trim() ?? ''
+  return bodyDeviceName || headerDeviceName
+}
+
 export default async function sessionRoutes(app: FastifyInstance) {
   const prisma = getPrismaClient()
 
@@ -40,11 +46,7 @@ export default async function sessionRoutes(app: FastifyInstance) {
     const tokenHash = hashToken(normalizedToken)
     const tokenLast4 = normalizedToken.slice(-4)
     const now = new Date()
-    const headerDeviceName = typeof req.headers['x-gateway-device-name'] === 'string'
-      ? req.headers['x-gateway-device-name'].trim()
-      : ''
-    const bodyDeviceName = req.body.deviceName?.trim() ?? ''
-    const deviceName = bodyDeviceName || headerDeviceName
+    const deviceName = getDeviceName(req.headers['x-gateway-device-name'], req.body.deviceName)
 
     const device = await prisma.mobileDevice.upsert({
       where: {

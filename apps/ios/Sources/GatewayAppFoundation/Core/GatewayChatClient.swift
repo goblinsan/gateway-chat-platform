@@ -118,6 +118,7 @@ public enum GatewayChatError: LocalizedError, Equatable {
 }
 
 public final class GatewayChatClient: GatewayChatServing {
+  private static let apnsTokenPattern = "^[a-f0-9]{32,512}$"
   private let session: URLSession
 
   public init(session: URLSession = .shared) {
@@ -155,7 +156,7 @@ public final class GatewayChatClient: GatewayChatServing {
       .replacingOccurrences(of: ">", with: "")
       .replacingOccurrences(of: "\\s+", with: "", options: .regularExpression)
       .lowercased()
-    guard normalizedToken.range(of: "^[a-f0-9]{32,512}$", options: .regularExpression) != nil else {
+    guard normalizedToken.range(of: Self.apnsTokenPattern, options: .regularExpression) != nil else {
       throw GatewayChatError.invalidAPNsToken
     }
 
