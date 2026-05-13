@@ -58,6 +58,19 @@ const envSchema = z.object({
   AGENT_SERVICE_API_KEY: z.string().optional(),
   AGENT_SERVICE_TIMEOUT_MS: z.coerce.number().default(30000),
   AGENT_SERVICE_RETRY_COUNT: z.coerce.number().default(2),
+
+  // APNs (Apple Push Notification service)
+  APNS_TEAM_ID: z.string().optional(),
+  APNS_KEY_ID: z.string().optional(),
+  APNS_BUNDLE_ID: z.string().optional(),
+  // Provide exactly one of: path to a .p8 file or base64-encoded private key
+  APNS_PRIVATE_KEY_PATH: z.string().optional(),
+  APNS_PRIVATE_KEY_BASE64: z.string().optional(),
+  APNS_SANDBOX: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1')
+    .default('false'),
 })
 
 export type Env = z.infer<typeof envSchema>
