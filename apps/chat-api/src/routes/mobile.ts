@@ -2,8 +2,98 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { getPrismaClient } from '../services/db'
 import { sendApnsNotification, isApnsConfigured } from '../services/apns'
+import { publishInboxMessage } from '../services/inbox'
 
 const ALERT_PAGE_LIMIT = 50
+const ALERT_DEDUP_LOOKBACK_MS = 6 * 60 * 60 * 1000
+const ALERT_SEVERITY_RANK: Record<string, number> = {
+  info: 0,
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+}
+const CRITICAL_SEVERITY_KEYWORDS = ['critical', 'emergency', 'fatal', 'panic', 'alert', 'down']
+const HIGH_SEVERITY_KEYWORDS = ['high', 'error', 'err', 'failed', 'failure']
+const MEDIUM_SEVERITY_KEYWORDS = ['medium', 'warn', 'warning', 'degraded']
+const LOW_SEVERITY_KEYWORDS = ['low', 'notice']
+const INFO_SEVERITY_KEYWORDS = ['info', 'informational', 'debug', 'ok']
+
+function normalizeEventSource(raw: unknown): string {
+  const source = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+  if (!source) return 'gateway'
+  if (source.includes('home') || source.includes('lab')) return 'homelab'
+  if (source.includes('gateway')) return 'gateway'
+  return source
+}
+
+function toSeverity(rawSeverity: unknown, source: string): string {
+  if (typeof rawSeverity === 'number' && Number.isFinite(rawSeverity)) {
+    if (rawSeverity >= 90) return 'critical'
+    if (rawSeverity >= 70) return 'high'
+    if (rawSeverity >= 40) return 'medium'
+    if (rawSeverity > 0) return 'low'
+    return 'info'
+  }
+
+  const value = typeof rawSeverity === 'string' ? rawSeverity.trim().toLowerCase() : ''
+  if (!value) return 'info'
+  if (CRITICAL_SEVERITY_KEYWORDS.includes(value)) return 'critical'
+  if (HIGH_SEVERITY_KEYWORDS.includes(value)) return 'high'
+  if (MEDIUM_SEVERITY_KEYWORDS.includes(value)) return 'medium'
+  if (LOW_SEVERITY_KEYWORDS.includes(value)) return 'low'
+  if (INFO_SEVERITY_KEYWORDS.includes(value)) return 'info'
+
+  if (source === 'homelab') {
+    if (value.includes('unreachable')) return 'critical'
+    if (value.includes('degrad')) return 'medium'
+  }
+
+  if (source === 'gateway') {
+    if (value.includes('warn')) return 'medium'
+    if (value.includes('error') || value.includes('fail')) return 'high'
+  }
+
+  return 'info'
+}
+
+function normalizeText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function parseObjectJson(raw: string | null): Record<string, unknown> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function buildDedupKey(input: {
+  source: string
+  sourceNode?: string
+  sourceService?: string
+  eventType?: string
+  title: string
+  body?: string
+  dedupKey?: string
+}): string {
+  if (input.dedupKey) return input.dedupKey.toLowerCase()
+  return [
+    input.source,
+    input.sourceNode ?? '',
+    input.sourceService ?? '',
+    input.eventType ?? '',
+    input.title,
+    input.body ?? '',
+  ]
+    .join('|')
+    .toLowerCase()
+}
 
 export default async function mobileRoutes(app: FastifyInstance) {
   const prisma = getPrismaClient()
@@ -157,6 +247,182 @@ export default async function mobileRoutes(app: FastifyInstance) {
         alertId,
         deviceId: device.id,
       })
+    },
+  )
+
+  /**
+   * POST /api/mobile/alerts/events
+   *
+   * Ingests gateway/home-lab events into the alert pipeline with severity
+   * normalization and deduplication. New events create an alert and publish a
+   * notification inbox item; duplicate events update metadata without creating
+   * additional alerts.
+   */
+  app.post<{
+    Body: {
+      source?: string
+      sourceNode?: string
+      sourceService?: string
+      eventType?: string
+      severity?: string | number
+      level?: string | number
+      title?: string
+      body?: string
+      message?: string
+      dedupKey?: string
+      metadata?: Record<string, unknown>
+    }
+  }>(
+    '/mobile/alerts/events',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            source: { type: 'string', minLength: 1, maxLength: 64 },
+            sourceNode: { type: 'string', minLength: 1, maxLength: 128 },
+            sourceService: { type: 'string', minLength: 1, maxLength: 128 },
+            eventType: { type: 'string', minLength: 1, maxLength: 128 },
+            severity: { anyOf: [{ type: 'string' }, { type: 'number' }] },
+            level: { anyOf: [{ type: 'string' }, { type: 'number' }] },
+            title: { type: 'string', minLength: 1, maxLength: 256 },
+            body: { type: 'string', minLength: 1, maxLength: 2048 },
+            message: { type: 'string', minLength: 1, maxLength: 2048 },
+            dedupKey: { type: 'string', minLength: 1, maxLength: 512 },
+            metadata: { type: 'object' },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const source = normalizeEventSource(req.body.source)
+      const sourceNode = normalizeText(req.body.sourceNode)
+      const sourceService = normalizeText(req.body.sourceService)
+      const eventType = normalizeText(req.body.eventType)
+      const title = normalizeText(req.body.title) ?? `Alert from ${source}`
+      const bodyText = normalizeText(req.body.body) ?? normalizeText(req.body.message)
+      const severity = toSeverity(req.body.severity ?? req.body.level, source)
+      const dedupKey = buildDedupKey({
+        source,
+        sourceNode,
+        sourceService,
+        eventType,
+        title,
+        body: bodyText,
+        dedupKey: normalizeText(req.body.dedupKey),
+      })
+      const now = new Date()
+
+      const recent = await prisma.alert.findMany({
+        where: {
+          userId: req.userId,
+          source,
+          title,
+          status: { in: ['open', 'acknowledged'] },
+          sourceNode: sourceNode ?? null,
+          sourceService: sourceService ?? null,
+          createdAt: { gte: new Date(now.getTime() - ALERT_DEDUP_LOOKBACK_MS) },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      })
+
+      const duplicate = recent.find((candidate) => {
+        const parsed = parseObjectJson(candidate.metadataJson)
+        return typeof parsed.dedupKey === 'string' && parsed.dedupKey.toLowerCase() === dedupKey
+      })
+
+      if (duplicate) {
+        const previousSeverityRank = ALERT_SEVERITY_RANK[duplicate.severity] ?? 0
+        const nextSeverityRank = ALERT_SEVERITY_RANK[severity] ?? 0
+        const shouldEscalate = nextSeverityRank > previousSeverityRank
+        const existingMetadata = parseObjectJson(duplicate.metadataJson)
+        const currentDuplicateCount = typeof existingMetadata.duplicateCount === 'number'
+          ? existingMetadata.duplicateCount
+          : 1
+        const mergedMetadata = {
+          ...existingMetadata,
+          dedupKey,
+          eventType,
+          rawSeverity: req.body.severity ?? req.body.level ?? null,
+          duplicateCount: currentDuplicateCount + 1,
+          lastSeenAt: now.toISOString(),
+          ...(req.body.metadata ? { eventMetadata: req.body.metadata } : {}),
+        }
+
+        const updated = await prisma.alert.update({
+          where: { id: duplicate.id },
+          data: {
+            ...(shouldEscalate ? { severity } : {}),
+            ...(shouldEscalate ? { status: 'open', acknowledgedAt: null } : {}),
+            ...(bodyText ? { body: bodyText } : {}),
+            metadataJson: JSON.stringify(mergedMetadata),
+          },
+        })
+
+        if (shouldEscalate) {
+          await publishInboxMessage({
+            userId: req.userId,
+            channelId: 'alerts',
+            agentId: 'system-alerts',
+            content: updated.body ?? updated.title,
+            kind: 'alert',
+            title: updated.title,
+            metadata: {
+              alertId: updated.id,
+              severity: updated.severity,
+              source: updated.source,
+              sourceNode: updated.sourceNode,
+              sourceService: updated.sourceService,
+              deduplicated: true,
+              escalated: true,
+            },
+          })
+        }
+
+        return reply.status(200).send({ alert: updated, created: false, deduplicated: true, escalated: shouldEscalate })
+      }
+
+      const created = await prisma.alert.create({
+        data: {
+          id: randomUUID(),
+          userId: req.userId,
+          title,
+          body: bodyText ?? null,
+          severity,
+          source,
+          sourceNode: sourceNode ?? null,
+          sourceService: sourceService ?? null,
+          status: 'open',
+          metadataJson: JSON.stringify({
+            dedupKey,
+            eventType,
+            rawSeverity: req.body.severity ?? req.body.level ?? null,
+            duplicateCount: 1,
+            lastSeenAt: now.toISOString(),
+            ...(req.body.metadata ? { eventMetadata: req.body.metadata } : {}),
+          }),
+        },
+      })
+
+      await publishInboxMessage({
+        userId: req.userId,
+        channelId: 'alerts',
+        agentId: 'system-alerts',
+        content: created.body ?? created.title,
+        kind: 'alert',
+        title: created.title,
+        metadata: {
+          alertId: created.id,
+          severity: created.severity,
+          source: created.source,
+          sourceNode: created.sourceNode,
+          sourceService: created.sourceService,
+          deduplicated: false,
+        },
+      })
+
+      return reply.status(201).send({ alert: created, created: true, deduplicated: false, escalated: false })
     },
   )
 
