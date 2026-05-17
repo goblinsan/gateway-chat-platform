@@ -1,6 +1,6 @@
 import Foundation
 
-public final class AppSessionController {
+public final class AppSessionController: @unchecked Sendable {
   private let configurationStore: AppConfigurationStoring
   private let tokenStore: TokenStoring
   private let healthChecker: GatewayHealthChecking
@@ -70,7 +70,9 @@ public final class AppSessionController {
 
     do {
       let response = try await healthChecker.checkHealth(baseURL: baseURL, token: tokenStore.readToken())
-      connectionStatus = response.status == "ok" ? .connected : .failed("Gateway status: \(response.status)")
+      connectionStatus = isReachableGatewayStatus(response.status)
+        ? .connected
+        : .failed("Gateway status: \(response.status)")
       if case .connected = connectionStatus {
         do {
           connectionIdentity = try await identityChecker?.fetchConnectionIdentity(baseURL: baseURL, token: tokenStore.readToken())
@@ -87,6 +89,11 @@ public final class AppSessionController {
     }
 
     return connectionStatus
+  }
+
+  private func isReachableGatewayStatus(_ status: String) -> Bool {
+    let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "ok" || normalized == "degraded"
   }
 
   public func replaceToken(_ token: String) {

@@ -5,6 +5,8 @@ const mockEnv = {
   CF_ACCESS_TEAM_DOMAIN: undefined as string | undefined,
   CF_ACCESS_AUD: undefined as string | undefined,
   CHAT_DEFAULT_USER_ID: 'me',
+  MOBILE_SHARED_TOKEN: undefined as string | undefined,
+  MOBILE_SHARED_USER_ID: undefined as string | undefined,
 }
 
 vi.mock('../config/env', () => ({
@@ -26,6 +28,8 @@ describe('user identity plugin', () => {
     mockEnv.CF_ACCESS_TEAM_DOMAIN = undefined
     mockEnv.CF_ACCESS_AUD = undefined
     mockEnv.CHAT_DEFAULT_USER_ID = 'me'
+    mockEnv.MOBILE_SHARED_TOKEN = undefined
+    mockEnv.MOBILE_SHARED_USER_ID = undefined
   })
 
   it('falls back to the default user in local mode', async () => {
@@ -33,7 +37,7 @@ describe('user identity plugin', () => {
     const res = await app.inject({ method: 'GET', url: '/api/session/me' })
 
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ userId: 'me' })
+    expect(JSON.parse(res.body)).toEqual({ id: 'me', userId: 'me' })
   })
 
   it('uses X-User-Id in local mode', async () => {
@@ -45,7 +49,7 @@ describe('user identity plugin', () => {
     })
 
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ userId: 'alice' })
+    expect(JSON.parse(res.body)).toEqual({ id: 'alice', userId: 'alice' })
   })
 
   it('requires the Cloudflare identity header when CF mode is configured', async () => {
@@ -57,6 +61,23 @@ describe('user identity plugin', () => {
 
     expect(res.statusCode).toBe(401)
     expect(JSON.parse(res.body).error).toContain('Missing Cloudflare Access')
+  })
+
+  it('accepts the configured mobile bearer token when CF mode is enabled', async () => {
+    mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
+    mockEnv.CF_ACCESS_AUD = 'audience'
+    mockEnv.MOBILE_SHARED_TOKEN = 'mobile-secret'
+    mockEnv.MOBILE_SHARED_USER_ID = 'mobile-user'
+
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/session/me',
+      headers: { authorization: 'Bearer mobile-secret' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ id: 'mobile-user', userId: 'mobile-user' })
   })
 
   it('uses the JWT subject in Cloudflare mode', async () => {
@@ -75,6 +96,6 @@ describe('user identity plugin', () => {
     })
 
     expect(res.statusCode).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ userId: 'cf-user-123' })
+    expect(JSON.parse(res.body)).toEqual({ id: 'cf-user-123', userId: 'cf-user-123' })
   })
 })

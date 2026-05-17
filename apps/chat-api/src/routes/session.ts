@@ -31,7 +31,7 @@ export default async function sessionRoutes(app: FastifyInstance) {
   const prisma = getPrismaClient()
 
   app.get('/session/me', async (req, reply) => {
-    return reply.send({ userId: req.userId })
+    return reply.send({ id: req.userId, userId: req.userId })
   })
 
   app.post<{

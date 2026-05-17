@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public struct GatewayHealthResponse: Decodable, Equatable {
+public struct GatewayHealthResponse: Decodable, Equatable, Sendable {
   public let status: String
 }
 
@@ -18,6 +18,9 @@ public protocol GatewaySessionIdentityChecking {
 public enum GatewayHealthError: LocalizedError, Equatable {
   case invalidResponse
   case httpError(Int)
+  case invalidContentType(String?)
+  case accessLoginRequired(String?)
+  case invalidPayload(String)
 
   public var errorDescription: String? {
     switch self {
@@ -25,11 +28,21 @@ public enum GatewayHealthError: LocalizedError, Equatable {
       return "Gateway returned an invalid response."
     case let .httpError(code):
       return "Gateway connection failed with HTTP \(code)."
+    case let .invalidContentType(contentType):
+      let suffix = contentType.map { " (\($0))" } ?? ""
+      return "Gateway returned a non-JSON response\(suffix)."
+    case let .accessLoginRequired(urlString):
+      if let urlString, !urlString.isEmpty {
+        return "Gateway is behind Cloudflare Access. The mobile client was redirected to \(urlString)."
+      }
+      return "Gateway is behind Cloudflare Access. The mobile client received an HTML login response instead of API JSON."
+    case let .invalidPayload(message):
+      return "Gateway returned JSON in an unexpected format: \(message)"
     }
   }
 }
 
-public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIdentityChecking {
+public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIdentityChecking, Sendable {
   private let session: URLSession
 
   public init(session: URLSession = .shared) {
@@ -59,7 +72,13 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
       throw GatewayHealthError.httpError(httpResponse.statusCode)
     }
 
-    return try JSONDecoder().decode(GatewayHealthResponse.self, from: data)
+    try validateJSONResponse(httpResponse, data: data)
+
+    do {
+      return try JSONDecoder().decode(GatewayHealthResponse.self, from: data)
+    } catch let error as DecodingError {
+      throw GatewayHealthError.invalidPayload(String(describing: error))
+    }
   }
 
   public func fetchConnectionIdentity(baseURL: URL, token: String?) async throws -> String? {
@@ -84,11 +103,18 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
       return nil
     }
 
-    let decoded = try JSONDecoder().decode(SessionMeResponse.self, from: data)
+    try validateJSONResponse(httpResponse, data: data)
+
+    let decoded: SessionMeResponse
+    do {
+      decoded = try JSONDecoder().decode(SessionMeResponse.self, from: data)
+    } catch let error as DecodingError {
+      throw GatewayHealthError.invalidPayload(String(describing: error))
+    }
     // Prefer nested user.id when the API returns a user object; otherwise fall back
     // to top-level id for deployments that return a flat session payload.
     // No client-provided identifier is used.
-    return decoded.user?.id ?? decoded.id
+    return decoded.user?.id ?? decoded.id ?? decoded.userID
   }
 
   private func endpointURL(baseURL: URL, endpointPath: String) -> URL? {
@@ -101,11 +127,39 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
     components?.path = basePath.isEmpty ? "/\(endpoint)" : "/\(basePath)/\(endpoint)"
     return components?.url
   }
+
+  private func validateJSONResponse(_ response: HTTPURLResponse, data: Data) throws {
+    let contentType = response.value(forHTTPHeaderField: "Content-Type")?.lowercased()
+    guard contentType?.contains("application/json") == true else {
+      if isCloudflareAccessResponse(response: response, data: data) {
+        throw GatewayHealthError.accessLoginRequired(response.url?.absoluteString)
+      }
+      throw GatewayHealthError.invalidContentType(contentType)
+    }
+  }
+
+  private func isCloudflareAccessResponse(response: HTTPURLResponse, data: Data) -> Bool {
+    if let host = response.url?.host?.lowercased(), host.contains("cloudflareaccess.com") {
+      return true
+    }
+
+    guard let body = String(data: data.prefix(512), encoding: .utf8)?.lowercased() else {
+      return false
+    }
+    return body.contains("cloudflare") && body.contains("access")
+  }
 }
 
 private struct SessionMeResponse: Decodable {
   let id: String?
+  let userID: String?
   let user: SessionUser?
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case userID = "userId"
+    case user
+  }
 }
 
 private struct SessionUser: Decodable {

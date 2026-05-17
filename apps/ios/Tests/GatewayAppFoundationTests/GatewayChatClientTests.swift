@@ -52,7 +52,7 @@ final class GatewayChatClientTests: XCTestCase {
       XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Device-Name"), "My iPhone")
       XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-App-Version"), "1.2.3")
 
-      let bodyData = try XCTUnwrap(request.httpBody)
+      let bodyData = try XCTUnwrap(request.stubbedBodyData())
       let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
       XCTAssertEqual(payload["apnsToken"] as? String, "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
       XCTAssertEqual(payload["notificationMinSeverity"] as? String, "high")
@@ -95,7 +95,7 @@ final class GatewayChatClientTests: XCTestCase {
       XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Client-Platform"), "ios")
       XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Device-Name"), "My iPhone")
 
-      guard let bodyData = request.httpBody else {
+      guard let bodyData = request.stubbedBodyData() else {
         return (400, Data("{}".utf8))
       }
       let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
@@ -306,7 +306,7 @@ final class GatewayChatClientTests: XCTestCase {
       XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Client-Platform"), "ios")
       XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Device-Name"), "Test Device")
 
-      guard let bodyData = request.httpBody else { return (400, Data("{}".utf8)) }
+      guard let bodyData = request.stubbedBodyData() else { return (400, Data("{}".utf8)) }
       let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
       XCTAssertEqual(payload["threadId"] as? String, "thread-1")
       return (200, Data(sseBody.utf8))
@@ -445,7 +445,7 @@ final class GatewayChatClientTests: XCTestCase {
 
   func testRegisterAPNsDeviceSendsNotificationMinSeverityInBody() async throws {
     URLProtocolStub.handler = { request in
-      let bodyData = try XCTUnwrap(request.httpBody)
+      let bodyData = try XCTUnwrap(request.stubbedBodyData())
       let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
       XCTAssertEqual(payload["notificationMinSeverity"] as? String, "critical")
       return (200, Data("{}".utf8))
@@ -464,7 +464,7 @@ final class GatewayChatClientTests: XCTestCase {
 
   func testRegisterAPNsDeviceSendsOffPreference() async throws {
     URLProtocolStub.handler = { request in
-      let bodyData = try XCTUnwrap(request.httpBody)
+      let bodyData = try XCTUnwrap(request.stubbedBodyData())
       let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
       XCTAssertEqual(payload["notificationMinSeverity"] as? String, "off")
       return (200, Data("{}".utf8))
@@ -538,4 +538,37 @@ private final class URLProtocolStub: URLProtocol {
   }
 
   override func stopLoading() {}
+}
+
+private extension URLRequest {
+  func stubbedBodyData() -> Data? {
+    if let httpBody {
+      return httpBody
+    }
+
+    guard let stream = httpBodyStream else {
+      return nil
+    }
+
+    stream.open()
+    defer { stream.close() }
+
+    var data = Data()
+    let bufferSize = 1024
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+    defer { buffer.deallocate() }
+
+    while stream.hasBytesAvailable {
+      let bytesRead = stream.read(buffer, maxLength: bufferSize)
+      if bytesRead < 0 {
+        return nil
+      }
+      if bytesRead == 0 {
+        break
+      }
+      data.append(buffer, count: bytesRead)
+    }
+
+    return data
+  }
 }

@@ -78,6 +78,11 @@ ALLOWED_ORIGINS=
 CF_ACCESS_TEAM_DOMAIN=yourdomain.cloudflareaccess.com
 CF_ACCESS_AUD=
 
+# Optional mobile bearer-token fallback when iOS clients cannot present
+# CF-Access-Jwt-Assertion headers directly.
+MOBILE_SHARED_TOKEN=
+MOBILE_SHARED_USER_ID=
+
 # TTS service (optional — provided by local-tts-service)
 TTS_ENABLED=false
 TTS_BASE_URL=http://192.168.0.172:5000

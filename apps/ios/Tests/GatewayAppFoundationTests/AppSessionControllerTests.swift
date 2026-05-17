@@ -40,7 +40,7 @@ final class AppSessionControllerTests: XCTestCase {
     XCTAssertEqual(status, .connected)
   }
 
-  func testHealthCheckMapsNonOkResponseToFailedStatus() async {
+  func testHealthCheckMapsDegradedResponseToConnected() async {
     let configStore = MockConfigurationStore(configuration: .init(baseURLString: "https://gateway.example.com", deviceName: "My iPhone"))
     let tokenStore = InMemoryTokenStore(token: "abc")
     let health = MockHealthChecker(response: .init(status: "degraded"))
@@ -48,7 +48,7 @@ final class AppSessionControllerTests: XCTestCase {
 
     let status = await session.runHealthCheck()
 
-    XCTAssertEqual(status, .failed("Gateway status: degraded"))
+    XCTAssertEqual(status, .connected)
   }
 
   func testHealthCheckCapturesConnectionIdentityWhenAvailable() async throws {

@@ -56,8 +56,10 @@ export default async function healthRoutes(app: FastifyInstance) {
       dependencies,
     }
 
-    const statusCode = body.status === 'ok' ? 200 : 503
-    return reply.status(statusCode).send(body)
+    // Keep /api/health usable as a connectivity probe for clients even when one
+    // or more optional upstream providers are degraded. Reserve non-2xx only for
+    // cases where this service itself cannot serve requests.
+    return reply.status(200).send(body)
   })
 
   app.get('/internal/diagnostics/lm-studio-connectivity', async (_req, reply) => {

@@ -9,7 +9,7 @@ vi.mock('../config/env', () => ({
     LM_STUDIO_B_BASE_URL: undefined,
     OPENAI_API_KEY: undefined,
     ANTHROPIC_API_KEY: undefined,
-    GOOGLE_API_KEY: undefined,
+    GOOGLE_API_KEY: 'configured-for-test',
   }),
 }))
 
@@ -19,6 +19,7 @@ vi.mock('../services/providerCheck', () => ({
 
 import Fastify from 'fastify'
 import healthRoutes from '../routes/health'
+import { checkProvider } from '../services/providerCheck'
 
 describe('GET /api/health', () => {
   it('returns health response', async () => {
@@ -32,6 +33,22 @@ describe('GET /api/health', () => {
     expect(body.version).toBe('1.0.0')
     expect(body.status).toBe('ok')
     expect(body.dependencies).toBeDefined()
+  })
+
+  it('returns 200 when one provider is degraded', async () => {
+    const app = Fastify()
+    vi.mocked(checkProvider).mockResolvedValueOnce({
+      status: 'error',
+      latencyMs: 12,
+      error: 'HTTP 403',
+    })
+    await app.register(healthRoutes, { prefix: '/api' })
+
+    const res = await app.inject({ method: 'GET', url: '/api/health' })
+    expect(res.statusCode).toBe(200)
+
+    const body = JSON.parse(res.payload)
+    expect(body.status).toBe('degraded')
   })
 })
 

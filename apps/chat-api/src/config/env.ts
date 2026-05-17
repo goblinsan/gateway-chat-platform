@@ -53,6 +53,10 @@ const envSchema = z.object({
   CHAT_DEFAULT_USER_ID: z.string().default('me'),
   CHAT_DEFAULT_CHANNEL_ID: z.string().default('coach'),
 
+  // Mobile bearer-token fallback
+  MOBILE_SHARED_TOKEN: z.string().optional(),
+  MOBILE_SHARED_USER_ID: z.string().optional(),
+
   // Internal agent-service (orchestration)
   AGENT_SERVICE_URL: z.string().url().optional(),
   AGENT_SERVICE_API_KEY: z.string().optional(),

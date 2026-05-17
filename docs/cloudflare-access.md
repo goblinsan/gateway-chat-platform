@@ -87,3 +87,31 @@ Keep the IP list up to date by periodically comparing it against:
 If your load balancer health checks need to reach `/api/health` without authentication,
 add a second Access policy with **Action = Bypass** scoped to the path `/api/health`.
 
+## 9. Native iOS Clients
+
+Cloudflare Access browser redirects do not work for the native iOS client in `apps/ios`.
+If the client calls `https://chat.yourdomain.com/api/*` and Access intercepts the request,
+the app receives HTML instead of JSON and setup fails.
+
+To support the native client:
+
+1. Add a dedicated **Bypass** policy for the mobile API paths the app uses:
+   - `/api/health`
+   - `/api/session/me`
+   - `/api/session/mobile-devices/apns`
+   - `/api/agents`
+   - `/api/chat`
+   - `/api/chat/stream`
+   - `/api/mobile/*`
+2. Configure a shared bearer token in the API environment:
+
+```env
+MOBILE_SHARED_TOKEN=<long-random-secret>
+MOBILE_SHARED_USER_ID=<stable-user-id>
+```
+
+3. Enter that same token into the iOS app's `API Token` field.
+
+The backend will then accept `Authorization: Bearer <MOBILE_SHARED_TOKEN>` for those
+mobile requests even when `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` are enabled for the
+rest of the platform.
