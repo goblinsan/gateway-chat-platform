@@ -208,9 +208,6 @@ struct SetupView: View {
         }
       }
       .scrollDismissesKeyboard(.interactively)
-      .simultaneousGesture(TapGesture().onEnded {
-        focusedField = nil
-      })
       .navigationTitle("Gateway Setup")
     }
   }
@@ -1533,9 +1530,6 @@ struct SettingsView: View {
         }
       }
       .scrollDismissesKeyboard(.interactively)
-      .simultaneousGesture(TapGesture().onEnded {
-        focusedField = nil
-      })
       .navigationTitle("Settings")
       .task {
         if replacementToken.isEmpty {
