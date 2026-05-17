@@ -85,7 +85,7 @@ final class AppSessionControllerTests: XCTestCase {
     guard case let .failed(message) = status else {
       return XCTFail("Expected failed status when identity lookup throws")
     }
-    XCTAssertTrue(message.contains("identity lookup failed"))
+    XCTAssertEqual(message, ThrowingIdentityChecker.TestError.failed.localizedDescription)
   }
 
   func testReplacingTokenResetsConnectionState() async {

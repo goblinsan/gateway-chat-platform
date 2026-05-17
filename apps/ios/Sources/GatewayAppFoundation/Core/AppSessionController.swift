@@ -69,18 +69,20 @@ public final class AppSessionController: @unchecked Sendable {
     connectionStatus = .checking
 
     do {
-      let response = try await healthChecker.checkHealth(baseURL: baseURL, token: tokenStore.readToken())
-      connectionStatus = isReachableGatewayStatus(response.status)
-        ? .connected
-        : .failed("Gateway status: \(response.status)")
-      if case .connected = connectionStatus {
-        do {
-          connectionIdentity = try await identityChecker?.fetchConnectionIdentity(baseURL: baseURL, token: tokenStore.readToken())
-        } catch {
+      let token = tokenStore.readToken()
+      if let identityChecker {
+        if let identity = try await identityChecker.fetchConnectionIdentity(baseURL: baseURL, token: token) {
+          connectionIdentity = identity
+          connectionStatus = .connected
+        } else {
           connectionIdentity = nil
-          connectionStatus = .failed("Gateway connected, but identity lookup failed: \(error.localizedDescription)")
+          connectionStatus = .failed("Gateway identity lookup returned no user.")
         }
       } else {
+        let response = try await healthChecker.checkHealth(baseURL: baseURL, token: token)
+        connectionStatus = isReachableGatewayStatus(response.status)
+          ? .connected
+          : .failed("Gateway status: \(response.status)")
         connectionIdentity = nil
       }
     } catch {

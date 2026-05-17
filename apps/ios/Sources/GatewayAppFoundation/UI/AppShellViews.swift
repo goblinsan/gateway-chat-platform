@@ -123,10 +123,18 @@ public struct GatewayAppRootView: View {
 }
 
 struct SetupView: View {
+  private enum Field: Hashable {
+    case baseURL
+    case apiToken
+    case deviceName
+  }
+
   @ObservedObject var model: GatewayAppViewModel
   @State private var errorMessage: String?
   @State private var isSavingSetup = false
   @State private var isTestingConnection = false
+  @State private var revealToken = false
+  @FocusState private var focusedField: Field?
 
   var body: some View {
     NavigationStack {
@@ -136,12 +144,17 @@ struct SetupView: View {
             .gatewayTextInputAutocapitalizationNever()
             .gatewayURLKeyboard()
             .autocorrectionDisabled()
+            .focused($focusedField, equals: .baseURL)
 
-          SecureField("API Token", text: $model.apiToken)
-            .gatewayTextInputAutocapitalizationNever()
-            .autocorrectionDisabled()
+          RevealableTokenField(
+            title: "API Token",
+            text: $model.apiToken,
+            isRevealed: $revealToken
+          )
+          .focused($focusedField, equals: .apiToken)
 
           TextField("Device Name", text: $model.deviceName)
+            .focused($focusedField, equals: .deviceName)
         }
 
         if let errorMessage {
@@ -194,6 +207,10 @@ struct SetupView: View {
           .disabled(isSavingSetup || isTestingConnection)
         }
       }
+      .scrollDismissesKeyboard(.interactively)
+      .simultaneousGesture(TapGesture().onEnded {
+        focusedField = nil
+      })
       .navigationTitle("Gateway Setup")
     }
   }
@@ -1211,17 +1228,11 @@ struct ChatView: View {
         } // end else (agents loaded or chat active)
       }
       .padding()
-      .navigationTitle("Chat")
-      .toolbar {
-        #if os(iOS)
-        ToolbarItemGroup(placement: .keyboard) {
-          Spacer()
-          Button("Done") {
-            isPromptFocused = false
-          }
-        }
-        #endif
+      .contentShape(Rectangle())
+      .onTapGesture {
+        isPromptFocused = false
       }
+      .navigationTitle("Chat")
       #if canImport(Speech)
       .onChange(of: speechController.isRecording) { _, isNowRecording in
         if !isNowRecording, !speechController.transcript.isEmpty {
@@ -1283,7 +1294,9 @@ struct ChatView: View {
       if let selectedAgentID, !agents.contains(where: { $0.id == selectedAgentID }) {
         self.selectedAgentID = nil
       }
-      errorMessage = nil
+      errorMessage = fetched.isEmpty
+        ? "No agents are available from this gateway. Verify the token or sync the gateway agent registry."
+        : nil
     } catch {
       errorMessage = error.localizedDescription
     }
@@ -1452,9 +1465,15 @@ private func copyToClipboard(_ text: String) {
 }
 
 struct SettingsView: View {
+  private enum Field: Hashable {
+    case token
+  }
+
   @ObservedObject var model: GatewayAppViewModel
   @State private var replacementToken = ""
   @State private var isRetesting = false
+  @State private var revealToken = false
+  @FocusState private var focusedField: Field?
 
   var body: some View {
     NavigationStack {
@@ -1494,10 +1513,16 @@ struct SettingsView: View {
         }
 
         Section("Credentials") {
-          SecureField("Replace API Token", text: $replacementToken)
-          Button("Save New Token") {
+          RevealableTokenField(
+            title: "API Token",
+            text: $replacementToken,
+            isRevealed: $revealToken
+          )
+          .focused($focusedField, equals: .token)
+
+          Button("Save API Token") {
             model.replaceToken(replacementToken)
-            replacementToken = ""
+            focusedField = nil
           }
         }
 
@@ -1507,7 +1532,16 @@ struct SettingsView: View {
           }
         }
       }
+      .scrollDismissesKeyboard(.interactively)
+      .simultaneousGesture(TapGesture().onEnded {
+        focusedField = nil
+      })
       .navigationTitle("Settings")
+      .task {
+        if replacementToken.isEmpty {
+          replacementToken = model.gatewayToken ?? ""
+        }
+      }
     }
   }
 }
@@ -1527,6 +1561,35 @@ struct ConnectionStatusText: View {
     case let .failed(message):
       Text(message)
         .foregroundStyle(.red)
+    }
+  }
+}
+
+struct RevealableTokenField: View {
+  let title: String
+  @Binding var text: String
+  @Binding var isRevealed: Bool
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Group {
+        if isRevealed {
+          TextField(title, text: $text)
+        } else {
+          SecureField(title, text: $text)
+        }
+      }
+      .gatewayTextInputAutocapitalizationNever()
+      .autocorrectionDisabled()
+
+      Button {
+        isRevealed.toggle()
+      } label: {
+        Image(systemName: isRevealed ? "eye.slash" : "eye")
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(isRevealed ? "Hide token" : "Show token")
     }
   }
 }

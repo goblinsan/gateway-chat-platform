@@ -17,7 +17,7 @@ public protocol GatewaySessionIdentityChecking {
 
 public enum GatewayHealthError: LocalizedError, Equatable {
   case invalidResponse
-  case httpError(Int)
+  case httpError(Int, String?)
   case invalidContentType(String?)
   case accessLoginRequired(String?)
   case invalidPayload(String)
@@ -26,7 +26,10 @@ public enum GatewayHealthError: LocalizedError, Equatable {
     switch self {
     case .invalidResponse:
       return "Gateway returned an invalid response."
-    case let .httpError(code):
+    case let .httpError(code, message):
+      if let message, !message.isEmpty {
+        return message
+      }
       return "Gateway connection failed with HTTP \(code)."
     case let .invalidContentType(contentType):
       let suffix = contentType.map { " (\($0))" } ?? ""
@@ -69,7 +72,10 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
     }
 
     guard (200..<300).contains(httpResponse.statusCode) else {
-      throw GatewayHealthError.httpError(httpResponse.statusCode)
+      throw GatewayHealthError.httpError(
+        httpResponse.statusCode,
+        parseErrorMessage(from: data)
+      )
     }
 
     try validateJSONResponse(httpResponse, data: data)
@@ -100,7 +106,10 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
     }
 
     guard (200..<300).contains(httpResponse.statusCode) else {
-      return nil
+      throw GatewayHealthError.httpError(
+        httpResponse.statusCode,
+        parseErrorMessage(from: data)
+      )
     }
 
     try validateJSONResponse(httpResponse, data: data)
@@ -147,6 +156,17 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
       return false
     }
     return body.contains("cloudflare") && body.contains("access")
+  }
+
+  private func parseErrorMessage(from data: Data) -> String? {
+    guard
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let message = object["error"] as? String ?? object["message"] as? String
+    else {
+      return nil
+    }
+    let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
   }
 }
 
