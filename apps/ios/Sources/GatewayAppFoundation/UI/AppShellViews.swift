@@ -133,12 +133,12 @@ struct SetupView: View {
       Form {
         Section("Gateway") {
           TextField("Gateway API URL", text: $model.baseURL)
-            .textInputAutocapitalization(.never)
-            .keyboardType(.URL)
+            .gatewayTextInputAutocapitalizationNever()
+            .gatewayURLKeyboard()
             .autocorrectionDisabled()
 
           SecureField("API Token", text: $model.apiToken)
-            .textInputAutocapitalization(.never)
+            .gatewayTextInputAutocapitalizationNever()
             .autocorrectionDisabled()
 
           TextField("Device Name", text: $model.deviceName)
@@ -367,6 +367,24 @@ struct AlertInboxView: View {
       }
       .navigationTitle("Alerts")
       .toolbar {
+        #if os(macOS)
+        ToolbarItem(placement: .automatic) {
+          if showingCachedData {
+            Label("Cached", systemImage: "clock.arrow.circlepath")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+        ToolbarItem(placement: .automatic) {
+          Picker("Status", selection: $selectedStatus) {
+            Text("Open").tag(GatewayAlertStatus.open)
+            Text("Ack'd").tag(GatewayAlertStatus.acknowledged)
+            Text("Resolved").tag(GatewayAlertStatus.resolved)
+          }
+          .pickerStyle(.segmented)
+          .frame(minWidth: 180)
+        }
+        #else
         ToolbarItem(placement: .topBarLeading) {
           if showingCachedData {
             Label("Cached", systemImage: "clock.arrow.circlepath")
@@ -383,6 +401,7 @@ struct AlertInboxView: View {
           .pickerStyle(.segmented)
           .frame(minWidth: 180)
         }
+        #endif
       }
       .navigationDestination(for: String.self) { alertID in
         AlertDetailView(model: model, alertID: alertID)
@@ -551,7 +570,7 @@ struct AlertDetailView: View {
       }
     }
     .navigationTitle("Alert Detail")
-    .navigationBarTitleDisplayMode(.inline)
+    .gatewayInlineNavigationTitle()
     .task {
       await loadAlert()
     }
@@ -940,7 +959,7 @@ struct ApprovalCardView: View {
       }
     }
     .navigationTitle("Action Approval")
-    .navigationBarTitleDisplayMode(.inline)
+    .gatewayInlineNavigationTitle()
     .task {
       await loadApproval()
     }
@@ -1145,7 +1164,7 @@ struct ChatView: View {
           HStack(alignment: .bottom, spacing: 8) {
             TextField("Type a prompt…", text: $prompt, axis: .vertical)
               .lineLimit(1...4)
-              .textInputAutocapitalization(.sentences)
+              .gatewayTextInputAutocapitalizationSentences()
               .autocorrectionDisabled(false)
               .focused($isPromptFocused)
 
@@ -1223,6 +1242,16 @@ struct ChatView: View {
       }
       #endif
       .toolbar {
+        #if os(macOS)
+        ToolbarItem(placement: .automatic) {
+          Button("Reload Agents") {
+            Task {
+              await loadAgents()
+            }
+          }
+          .disabled(isLoadingAgents || isSending)
+        }
+        #else
         ToolbarItem(placement: .topBarTrailing) {
           Button("Reload Agents") {
             Task {
@@ -1231,6 +1260,7 @@ struct ChatView: View {
           }
           .disabled(isLoadingAgents || isSending)
         }
+        #endif
       }
     }
     .task {
@@ -1498,6 +1528,44 @@ struct ConnectionStatusText: View {
       Text(message)
         .foregroundStyle(.red)
     }
+  }
+}
+
+private extension View {
+  @ViewBuilder
+  func gatewayTextInputAutocapitalizationNever() -> some View {
+    #if os(iOS)
+    textInputAutocapitalization(.never)
+    #else
+    self
+    #endif
+  }
+
+  @ViewBuilder
+  func gatewayTextInputAutocapitalizationSentences() -> some View {
+    #if os(iOS)
+    textInputAutocapitalization(.sentences)
+    #else
+    self
+    #endif
+  }
+
+  @ViewBuilder
+  func gatewayURLKeyboard() -> some View {
+    #if os(iOS)
+    keyboardType(.URL)
+    #else
+    self
+    #endif
+  }
+
+  @ViewBuilder
+  func gatewayInlineNavigationTitle() -> some View {
+    #if os(iOS)
+    navigationBarTitleDisplayMode(.inline)
+    #else
+    self
+    #endif
   }
 }
 #endif

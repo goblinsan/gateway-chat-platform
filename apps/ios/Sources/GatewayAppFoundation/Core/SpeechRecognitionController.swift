@@ -88,11 +88,7 @@ public final class SpeechRecognitionController: ObservableObject, SpeechTranscri
     // Microphone authorisation
     let micPermission = AVAudioApplication.shared.recordPermission
     if micPermission == .undetermined {
-      let granted: Bool = await withCheckedContinuation { continuation in
-        AVAudioApplication.shared.requestRecordPermission { granted in
-          continuation.resume(returning: granted)
-        }
-      }
+      let granted = await AVAudioApplication.requestRecordPermission()
       if !granted {
         recognitionState = .permissionDenied
       }
@@ -109,7 +105,7 @@ public final class SpeechRecognitionController: ObservableObject, SpeechTranscri
   /// - A speech recogniser is available for the current locale.
   /// - Speech recognition and microphone permissions have been granted.
   ///
-  /// - Throws: Any error thrown by `AVAudioSession` or `AVAudioEngine.start()`.
+  /// - Throws: Any error thrown while configuring audio capture or starting the audio engine.
   public func startRecording() throws {
     guard let recognizer = speechRecognizer, recognizer.isAvailable else {
       recognitionState = .unavailable
@@ -128,9 +124,7 @@ public final class SpeechRecognitionController: ObservableObject, SpeechTranscri
     recognitionTask?.cancel()
     recognitionTask = nil
 
-    let audioSession = AVAudioSession.sharedInstance()
-    try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
-    try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+    try configureAudioSessionForRecording()
 
     let request = SFSpeechAudioBufferRecognitionRequest()
     request.shouldReportPartialResults = true
@@ -192,7 +186,21 @@ public final class SpeechRecognitionController: ObservableObject, SpeechTranscri
       recognitionState = .idle
     }
 
+    deactivateAudioSession()
+  }
+
+  private func configureAudioSessionForRecording() throws {
+    #if os(iOS)
+    let audioSession = AVAudioSession.sharedInstance()
+    try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
+    try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+    #endif
+  }
+
+  private func deactivateAudioSession() {
+    #if os(iOS)
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    #endif
   }
 }
 #endif

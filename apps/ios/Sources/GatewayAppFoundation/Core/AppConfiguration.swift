@@ -26,7 +26,7 @@ public enum NotificationPreferenceLevel: String, CaseIterable, Equatable, Sendab
   }
 }
 
-public struct AppConfiguration: Equatable {
+public struct AppConfiguration: Equatable, Sendable {
   public var baseURLString: String
   public var deviceName: String
   /// Minimum severity level that triggers a push notification.
@@ -61,14 +61,14 @@ public struct AppConfiguration: Equatable {
   }
 }
 
-public enum GatewayConnectionStatus: Equatable {
+public enum GatewayConnectionStatus: Equatable, Sendable {
   case unknown
   case checking
   case connected
   case failed(String)
 }
 
-public enum GatewaySetupError: LocalizedError, Equatable {
+public enum GatewaySetupError: LocalizedError, Equatable, Sendable {
   case invalidBaseURL
   case missingToken
   case missingDeviceName

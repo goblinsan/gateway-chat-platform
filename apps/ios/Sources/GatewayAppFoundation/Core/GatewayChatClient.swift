@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public struct GatewayAgentSummary: Decodable, Equatable, Identifiable {
+public struct GatewayAgentSummary: Decodable, Equatable, Identifiable, Sendable {
   public let id: String
   public let name: String
   public let icon: String?
@@ -139,7 +139,7 @@ public enum GatewayStreamEvent: Equatable, Sendable {
   case error(String)
 }
 
-public struct GatewayConversationMessage: Equatable, Encodable {
+public struct GatewayConversationMessage: Equatable, Encodable, Sendable {
   public let role: String
   public let content: String
 
@@ -149,7 +149,7 @@ public struct GatewayConversationMessage: Equatable, Encodable {
   }
 }
 
-public struct GatewayTypedPrompt: Equatable {
+public struct GatewayTypedPrompt: Equatable, Sendable {
   public let text: String
   public let agentID: String?
 
@@ -159,13 +159,13 @@ public struct GatewayTypedPrompt: Equatable {
   }
 }
 
-public struct GatewayChatResult: Equatable {
+public struct GatewayChatResult: Equatable, Sendable {
   public let agentID: String
   public let content: String
   public let threadID: String?
 }
 
-public protocol GatewayChatServing {
+public protocol GatewayChatServing: Sendable {
   func fetchAgents(baseURL: URL, token: String?) async throws -> [GatewayAgentSummary]
   func registerAPNsDevice(
     baseURL: URL,
@@ -257,7 +257,7 @@ public protocol GatewayChatServing {
   ) async throws -> GatewayActionApproval
 }
 
-public enum GatewayChatError: LocalizedError, Equatable {
+public enum GatewayChatError: LocalizedError, Equatable, Sendable {
   case missingConfiguration
   case invalidAPNsToken
   case emptyPrompt
@@ -289,7 +289,7 @@ public enum GatewayChatError: LocalizedError, Equatable {
   }
 }
 
-public final class GatewayChatClient: GatewayChatServing {
+public final class GatewayChatClient: GatewayChatServing, Sendable {
   private static let apnsTokenPattern = "^[a-f0-9]{32,512}$"
   private let session: URLSession
   /// Timeout for regular (non-streaming) API requests in seconds. Default: 30.
@@ -494,7 +494,7 @@ public final class GatewayChatClient: GatewayChatServing {
     }
     let sseText = String(data: data, encoding: .utf8) ?? ""
     let events = sseText.components(separatedBy: "\n").compactMap {
-      parseSseLine($0, fallbackAgentID: agentID)
+      Self.parseSseLine($0, fallbackAgentID: agentID)
     }
     return AsyncThrowingStream { continuation in
       for event in events {
@@ -526,7 +526,7 @@ public final class GatewayChatClient: GatewayChatServing {
         do {
           for try await line in bytes.lines {
             if Task.isCancelled { break }
-            if let event = parseSseLine(line, fallbackAgentID: agentID) {
+            if let event = Self.parseSseLine(line, fallbackAgentID: agentID) {
               continuation.yield(event)
             }
           }
@@ -542,7 +542,7 @@ public final class GatewayChatClient: GatewayChatServing {
 
   /// Parse a single SSE `data:` line into a `GatewayStreamEvent`.
   /// Returns `nil` for lines that are not SSE data lines or contain unknown types.
-  private func parseSseLine(_ line: String, fallbackAgentID: String) -> GatewayStreamEvent? {
+  private static func parseSseLine(_ line: String, fallbackAgentID: String) -> GatewayStreamEvent? {
     guard line.hasPrefix("data: ") else { return nil }
     let jsonStr = String(line.dropFirst(6))
     guard
