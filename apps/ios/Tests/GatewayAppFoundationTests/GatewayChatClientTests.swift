@@ -50,10 +50,12 @@ final class GatewayChatClientTests: XCTestCase {
       XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-123")
       XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Client-Platform"), "ios")
       XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-Device-Name"), "My iPhone")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "X-Gateway-App-Version"), "1.2.3")
 
       let bodyData = try XCTUnwrap(request.httpBody)
       let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
       XCTAssertEqual(payload["apnsToken"] as? String, "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+      XCTAssertEqual(payload["notificationMinSeverity"] as? String, "high")
       return (200, Data("{}".utf8))
     }
 
@@ -62,7 +64,9 @@ final class GatewayChatClientTests: XCTestCase {
       baseURL: URL(string: "https://gateway.example.com/chat/")!,
       token: "token-123",
       apnsToken: "<ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789>",
-      deviceName: "My iPhone"
+      deviceName: "My iPhone",
+      appVersion: "1.2.3",
+      notificationMinSeverity: .highAndAbove
     )
   }
 
@@ -73,7 +77,9 @@ final class GatewayChatClientTests: XCTestCase {
         baseURL: URL(string: "https://gateway.example.com/chat/")!,
         token: "token-123",
         apnsToken: "   <>   ",
-        deviceName: "My iPhone"
+        deviceName: "My iPhone",
+        appVersion: nil,
+        notificationMinSeverity: .highAndAbove
       )
       XCTFail("Expected invalid APNs token error")
     } catch let error as GatewayChatError {
@@ -435,6 +441,44 @@ final class GatewayChatClientTests: XCTestCase {
       before: "2026-05-13T00:00:00.000Z"
     )
     XCTAssertEqual(alerts.count, 0)
+  }
+
+  func testRegisterAPNsDeviceSendsNotificationMinSeverityInBody() async throws {
+    URLProtocolStub.handler = { request in
+      let bodyData = try XCTUnwrap(request.httpBody)
+      let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+      XCTAssertEqual(payload["notificationMinSeverity"] as? String, "critical")
+      return (200, Data("{}".utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    try await client.registerAPNsDevice(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      apnsToken: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      deviceName: nil,
+      appVersion: nil,
+      notificationMinSeverity: .criticalOnly
+    )
+  }
+
+  func testRegisterAPNsDeviceSendsOffPreference() async throws {
+    URLProtocolStub.handler = { request in
+      let bodyData = try XCTUnwrap(request.httpBody)
+      let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+      XCTAssertEqual(payload["notificationMinSeverity"] as? String, "off")
+      return (200, Data("{}".utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    try await client.registerAPNsDevice(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: nil,
+      apnsToken: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      deviceName: nil,
+      appVersion: nil,
+      notificationMinSeverity: .off
+    )
   }
 
   func testFetchAlertsMapsHttpError() async throws {

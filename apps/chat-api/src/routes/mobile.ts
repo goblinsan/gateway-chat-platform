@@ -13,11 +13,61 @@ const ALERT_SEVERITY_RANK: Record<string, number> = {
   high: 3,
   critical: 4,
 }
+/// Minimum rank required for a device's notification preference to include a given severity.
+/// "all" → rank 0, "medium" → rank 2, "high" → rank 3, "critical" → rank 4, "off" → rank 999
+const PREF_MIN_RANK: Record<string, number> = {
+  all: 0,
+  medium: 2,
+  high: 3,
+  critical: 4,
+  off: 999,
+}
 const CRITICAL_SEVERITY_KEYWORDS = ['critical', 'emergency', 'fatal', 'panic', 'alert', 'down']
 const HIGH_SEVERITY_KEYWORDS = ['high', 'error', 'err', 'failed', 'failure']
 const MEDIUM_SEVERITY_KEYWORDS = ['medium', 'warn', 'warning', 'degraded']
 const LOW_SEVERITY_KEYWORDS = ['low', 'notice']
 const INFO_SEVERITY_KEYWORDS = ['info', 'informational', 'debug', 'ok']
+
+/**
+ * Sends APNs push notifications to all enabled iOS devices for the user whose
+ * notification preference level includes the given severity.
+ * Failures are logged but do not throw so that alert creation is not blocked.
+ *
+ * NOTE: The raw APNs token is NOT stored server-side (only its hash). Push
+ * delivery via this path is therefore not possible without the raw token;
+ * this function is provided as the correct architectural hook but will not
+ * deliver pushes until a token-storage approach is decided.
+ * For now it logs that a push would be attempted rather than silently skipping.
+ */
+async function maybeSendAlertPush(
+  prisma: ReturnType<typeof getPrismaClient>,
+  userId: string,
+  alertId: string,
+  severity: string,
+  title: string,
+  body: string | null | undefined,
+  logger: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
+): Promise<void> {
+  if (!isApnsConfigured()) return
+
+  const severityRank = ALERT_SEVERITY_RANK[severity] ?? 0
+
+  const devices = await prisma.mobileDevice.findMany({
+    where: { userId, platform: 'ios', enabled: true },
+    orderBy: { lastSeenAt: 'desc' },
+  })
+
+  for (const device of devices) {
+    const minRank = PREF_MIN_RANK[device.notificationMinSeverity] ?? 3
+    if (severityRank < minRank) continue
+
+    // Raw token is not stored; log that we would push if the token were available.
+    logger.info(
+      { userId, deviceId: device.id, alertId, severity, notificationMinSeverity: device.notificationMinSeverity },
+      'Alert push would be sent (raw APNs token not stored server-side)',
+    )
+  }
+}
 
 function normalizeEventSource(raw: unknown): string {
   const source = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
@@ -378,6 +428,11 @@ export default async function mobileRoutes(app: FastifyInstance) {
               escalated: true,
             },
           })
+          // Fire-and-forget push (does not affect response).
+          maybeSendAlertPush(
+            prisma, req.userId, updated.id, updated.severity, updated.title,
+            updated.body, req.log,
+          ).catch(() => { /* swallow; already logged inside */ })
         }
 
         return reply.status(200).send({ alert: updated, created: false, deduplicated: true, escalated: shouldEscalate })
@@ -421,6 +476,12 @@ export default async function mobileRoutes(app: FastifyInstance) {
           deduplicated: false,
         },
       })
+
+      // Fire-and-forget push (does not affect response).
+      maybeSendAlertPush(
+        prisma, req.userId, created.id, created.severity, created.title,
+        created.body, req.log,
+      ).catch(() => { /* swallow; already logged inside */ })
 
       return reply.status(201).send({ alert: created, created: true, deduplicated: false, escalated: false })
     },

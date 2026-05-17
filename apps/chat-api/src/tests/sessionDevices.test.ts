@@ -32,25 +32,28 @@ async function buildApp() {
   return app
 }
 
+const VALID_TOKEN = '< ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789 >'
+const NORMALIZED_TOKEN = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
+
 describe('POST /api/session/mobile-devices/apns', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockEnv.CF_ACCESS_TEAM_DOMAIN = undefined
     mockEnv.CF_ACCESS_AUD = undefined
     mockEnv.CHAT_DEFAULT_USER_ID = 'me'
-  })
-
-  it('hashes and stores APNs token for the authenticated user', async () => {
-    const normalizedToken = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
-    const expectedHash = createHash('sha256').update(normalizedToken).digest('hex')
     mockUpsert.mockResolvedValue({
       id: 'device-1',
       platform: 'ios',
       deviceName: 'Alice iPhone',
       tokenLast4: '6789',
+      notificationMinSeverity: 'high',
       updatedAt: new Date('2026-05-13T00:00:00.000Z'),
       lastSeenAt: new Date('2026-05-13T00:00:00.000Z'),
     })
+  })
+
+  it('hashes and stores APNs token for the authenticated user', async () => {
+    const expectedHash = createHash('sha256').update(NORMALIZED_TOKEN).digest('hex')
 
     const app = await buildApp()
     const res = await app.inject({
@@ -58,7 +61,7 @@ describe('POST /api/session/mobile-devices/apns', () => {
       url: '/api/session/mobile-devices/apns',
       headers: { 'x-user-id': 'alice' },
       payload: {
-        apnsToken: "< ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789 >",
+        apnsToken: VALID_TOKEN,
         deviceName: 'Alice iPhone',
       },
     })
@@ -80,8 +83,67 @@ describe('POST /api/session/mobile-devices/apns', () => {
         deviceName: 'Alice iPhone',
       }),
     }))
-    expect(res.body).not.toContain(normalizedToken)
+    expect(res.body).not.toContain(NORMALIZED_TOKEN)
     expect(res.body).not.toContain(expectedHash)
+  })
+
+  it('stores notificationMinSeverity from request body', async () => {
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/session/mobile-devices/apns',
+      headers: { 'x-user-id': 'alice' },
+      payload: { apnsToken: VALID_TOKEN, notificationMinSeverity: 'critical' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ notificationMinSeverity: 'critical' }),
+      update: expect.objectContaining({ notificationMinSeverity: 'critical' }),
+    }))
+  })
+
+  it('falls back to "high" for unknown notificationMinSeverity values', async () => {
+    const app = await buildApp()
+    await app.inject({
+      method: 'POST',
+      url: '/api/session/mobile-devices/apns',
+      headers: { 'x-user-id': 'alice' },
+      payload: { apnsToken: VALID_TOKEN, notificationMinSeverity: 'banana' },
+    })
+
+    expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ notificationMinSeverity: 'high' }),
+    }))
+  })
+
+  it('stores appVersion from request body', async () => {
+    const app = await buildApp()
+    await app.inject({
+      method: 'POST',
+      url: '/api/session/mobile-devices/apns',
+      headers: { 'x-user-id': 'alice' },
+      payload: { apnsToken: VALID_TOKEN, appVersion: '1.2.3' },
+    })
+
+    expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ appVersion: '1.2.3' }),
+      update: expect.objectContaining({ appVersion: '1.2.3' }),
+    }))
+  })
+
+  it('returns notificationMinSeverity in the response', async () => {
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/session/mobile-devices/apns',
+      headers: { 'x-user-id': 'alice' },
+      payload: { apnsToken: VALID_TOKEN },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.notificationMinSeverity).toBe('high')
   })
 
   it('rejects malformed APNs token values', async () => {

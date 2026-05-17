@@ -29,7 +29,7 @@ public enum GatewayAlertStatus: String, Decodable, Equatable, CaseIterable, Send
 }
 
 /// Summary fields returned by the alert list endpoint.
-public struct GatewayAlertSummary: Decodable, Equatable, Identifiable, Sendable {
+public struct GatewayAlertSummary: Codable, Equatable, Identifiable, Sendable {
   public let id: String
   public let title: String
   public let severity: String
@@ -171,7 +171,9 @@ public protocol GatewayChatServing {
     baseURL: URL,
     token: String?,
     apnsToken: String,
-    deviceName: String?
+    deviceName: String?,
+    appVersion: String?,
+    notificationMinSeverity: NotificationPreferenceLevel
   ) async throws
   func sendPrompt(
     baseURL: URL,
@@ -290,9 +292,19 @@ public enum GatewayChatError: LocalizedError, Equatable {
 public final class GatewayChatClient: GatewayChatServing {
   private static let apnsTokenPattern = "^[a-f0-9]{32,512}$"
   private let session: URLSession
+  /// Timeout for regular (non-streaming) API requests in seconds. Default: 30.
+  private let requestTimeout: TimeInterval
+  /// Timeout for streaming API requests in seconds. Default: 90.
+  private let streamTimeout: TimeInterval
 
-  public init(session: URLSession = .shared) {
+  public init(
+    session: URLSession = .shared,
+    requestTimeout: TimeInterval = 30,
+    streamTimeout: TimeInterval = 90
+  ) {
     self.session = session
+    self.requestTimeout = requestTimeout
+    self.streamTimeout = streamTimeout
   }
 
   public func fetchAgents(baseURL: URL, token: String?) async throws -> [GatewayAgentSummary] {
@@ -300,11 +312,11 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "GET"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -318,7 +330,9 @@ public final class GatewayChatClient: GatewayChatServing {
     baseURL: URL,
     token: String?,
     apnsToken: String,
-    deviceName: String?
+    deviceName: String?,
+    appVersion: String? = nil,
+    notificationMinSeverity: NotificationPreferenceLevel = .highAndAbove
   ) async throws {
     let normalizedToken = apnsToken
       .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -334,13 +348,16 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "POST"
-    addCommonHeaders(request: &request, token: token, deviceName: deviceName)
+    addCommonHeaders(request: &request, token: token, deviceName: deviceName, appVersion: appVersion)
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = try JSONEncoder().encode(RegisterAPNsDevicePayload(apnsToken: normalizedToken))
+    request.httpBody = try JSONEncoder().encode(RegisterAPNsDevicePayload(
+      apnsToken: normalizedToken,
+      notificationMinSeverity: notificationMinSeverity.rawValue
+    ))
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -366,7 +383,7 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "POST"
     addCommonHeaders(request: &request, token: token, deviceName: deviceName)
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -378,7 +395,7 @@ public final class GatewayChatClient: GatewayChatServing {
     )
     request.httpBody = try JSONEncoder().encode(payload)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -396,6 +413,30 @@ public final class GatewayChatClient: GatewayChatServing {
       content: assistantContent,
       threadID: (normalizedThreadID?.isEmpty == false) ? normalizedThreadID : nil
     )
+  }
+
+  /// Performs a request, retrying once on transient network errors
+  /// (connection lost, not connected, or timed out).
+  private func performWithRetry(_ request: URLRequest) async throws -> (Data, URLResponse) {
+    do {
+      return try await perform(request)
+    } catch let chatError as GatewayChatError {
+      // Only retry on transport-layer errors that may be transient.
+      if case let .transport(msg) = chatError, isTransientError(msg) {
+        // Brief pause before retry.
+        try await Task.sleep(nanoseconds: 500_000_000)
+        return try await perform(request)
+      }
+      throw chatError
+    }
+  }
+
+  private func isTransientError(_ message: String) -> Bool {
+    let lower = message.lowercased()
+    return lower.contains("network connection was lost")
+      || lower.contains("not connected to the internet")
+      || lower.contains("timed out")
+      || lower.contains("the request timed out")
   }
 
   private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
@@ -425,7 +466,7 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: streamTimeout)
     request.httpMethod = "POST"
     addCommonHeaders(request: &request, token: token, deviceName: deviceName)
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -560,11 +601,11 @@ public final class GatewayChatClient: GatewayChatServing {
       urlWithQuery = URL(string: url.absoluteString + "?" + query) ?? url
     }
 
-    var request = URLRequest(url: urlWithQuery)
+    var request = URLRequest(url: urlWithQuery, timeoutInterval: requestTimeout)
     request.httpMethod = "GET"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -583,11 +624,11 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "GET"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -606,11 +647,11 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "POST"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -629,11 +670,11 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "POST"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -653,11 +694,11 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "GET"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -676,11 +717,11 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "GET"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -699,11 +740,11 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "POST"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -722,11 +763,11 @@ public final class GatewayChatClient: GatewayChatServing {
       throw GatewayChatError.missingConfiguration
     }
 
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
     request.httpMethod = "POST"
     addCommonHeaders(request: &request, token: token, deviceName: nil)
 
-    let (data, response) = try await perform(request)
+    let (data, response) = try await performWithRetry(request)
     let httpResponse = try validateHTTPResponse(response)
     guard (200..<300).contains(httpResponse.statusCode) else {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
@@ -749,13 +790,21 @@ public final class GatewayChatClient: GatewayChatServing {
     return decoded.message ?? decoded.error
   }
 
-  private func addCommonHeaders(request: inout URLRequest, token: String?, deviceName: String?) {
+  private func addCommonHeaders(
+    request: inout URLRequest,
+    token: String?,
+    deviceName: String?,
+    appVersion: String? = nil
+  ) {
     if let token, !token.isEmpty {
       request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
     request.setValue("ios", forHTTPHeaderField: "X-Gateway-Client-Platform")
     if let deviceName, !deviceName.isEmpty {
       request.setValue(deviceName, forHTTPHeaderField: "X-Gateway-Device-Name")
+    }
+    if let appVersion, !appVersion.isEmpty {
+      request.setValue(appVersion, forHTTPHeaderField: "X-Gateway-App-Version")
     }
   }
 
@@ -789,6 +838,8 @@ private struct ChatRequestPayload: Encodable {
 
 private struct RegisterAPNsDevicePayload: Encodable {
   let apnsToken: String
+  /// Minimum alert severity that should trigger a push notification.
+  let notificationMinSeverity: String
 }
 
 private struct ChatResponsePayload: Decodable {

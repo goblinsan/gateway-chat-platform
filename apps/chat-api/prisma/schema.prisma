@@ -104,16 +104,21 @@ model UserPersona {
 }
 
 model MobileDevice {
-  id         String   @id @default(uuid())
-  userId     String
-  platform   String
-  tokenHash  String
-  tokenLast4 String
-  deviceName String?
-  enabled    Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  lastSeenAt DateTime @default(now())
+  id                      String   @id @default(uuid())
+  userId                  String
+  platform                String
+  tokenHash               String
+  tokenLast4              String
+  deviceName              String?
+  enabled                 Boolean  @default(true)
+  /// Minimum alert severity level that should trigger a push notification.
+  /// One of: "all" | "medium" | "high" | "critical" | "off". Default: "high".
+  notificationMinSeverity String   @default("high")
+  /// App version reported by the client at registration time (e.g. "1.2.3").
+  appVersion              String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  lastSeenAt              DateTime @default(now())
 
   pushAttempts PushAttempt[]
 

@@ -31,6 +31,7 @@ vi.mock('../services/db', () => ({
   getPrismaClient: () => ({
     mobileDevice: {
       findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn(),
     },
     pushAttempt: {
