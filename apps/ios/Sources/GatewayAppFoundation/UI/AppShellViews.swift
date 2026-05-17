@@ -23,13 +23,21 @@ public final class GatewayAppViewModel: ObservableObject {
   /// Set this to an approval ID to deep-link into its approval card when the
   /// app is foregrounded from an approval push notification tap.
   @Published public var pendingApprovalID: String?
+  /// Current notification preference level, persisted across launches.
+  @Published public var notificationPreference: NotificationPreferenceLevel
 
   private let session: AppSessionController
   let chatClient: GatewayChatServing
+  let alertCache: LocalAlertCache
 
-  public init(session: AppSessionController, chatClient: GatewayChatServing = GatewayChatClient()) {
+  public init(
+    session: AppSessionController,
+    chatClient: GatewayChatServing = GatewayChatClient(),
+    alertCache: LocalAlertCache = LocalAlertCache()
+  ) {
     self.session = session
     self.chatClient = chatClient
+    self.alertCache = alertCache
     self.baseURL = ""
     self.deviceName = ""
     self.apiToken = ""
@@ -37,6 +45,7 @@ public final class GatewayAppViewModel: ObservableObject {
     self.connectionIdentity = nil
     self.pendingAlertID = nil
     self.pendingApprovalID = nil
+    self.notificationPreference = .highAndAbove
     syncFromSession()
   }
 
@@ -73,8 +82,14 @@ public final class GatewayAppViewModel: ObservableObject {
     syncFromSession()
   }
 
+  public func saveNotificationPreference(_ level: NotificationPreferenceLevel) {
+    session.saveNotificationPreference(level)
+    notificationPreference = level
+  }
+
   public func clearLocalData() {
     session.clearLocalData()
+    alertCache.clear()
     syncFromSession()
     apiToken = ""
   }
@@ -85,6 +100,7 @@ public final class GatewayAppViewModel: ObservableObject {
     deviceName = configuration.deviceName
     connectionStatus = session.connectionStatus
     connectionIdentity = session.connectionIdentity
+    notificationPreference = configuration.notificationPreference
   }
 }
 
@@ -109,6 +125,8 @@ public struct GatewayAppRootView: View {
 struct SetupView: View {
   @ObservedObject var model: GatewayAppViewModel
   @State private var errorMessage: String?
+  @State private var isSavingSetup = false
+  @State private var isTestingConnection = false
 
   var body: some View {
     NavigationStack {
@@ -133,21 +151,47 @@ struct SetupView: View {
           }
         }
 
+        if case let .failed(reason) = model.connectionStatus {
+          Section {
+            Text(reason)
+              .foregroundStyle(.red)
+          }
+        } else if case .connected = model.connectionStatus {
+          Section {
+            Text("Connected")
+              .foregroundStyle(.green)
+          }
+        }
+
         Section {
           Button("Save Setup") {
+            isSavingSetup = true
             do {
               try model.saveSetup()
               errorMessage = nil
             } catch {
               errorMessage = error.localizedDescription
             }
+            isSavingSetup = false
           }
+          .disabled(isSavingSetup || isTestingConnection)
 
-          Button("Test Connection") {
+          Button {
+            isTestingConnection = true
             Task {
               await model.checkConnection()
+              isTestingConnection = false
+            }
+          } label: {
+            HStack(spacing: 6) {
+              Text("Test Connection")
+              if isTestingConnection {
+                ProgressView()
+                  .controlSize(.small)
+              }
             }
           }
+          .disabled(isSavingSetup || isTestingConnection)
         }
       }
       .navigationTitle("Gateway Setup")
@@ -277,6 +321,7 @@ struct AlertInboxView: View {
   @State private var selectedStatus: GatewayAlertStatus = .open
   @State private var isLoading = false
   @State private var errorMessage: String?
+  @State private var showingCachedData = false
   @State private var selectedAlertID: String?
   @State private var navigationPath = NavigationPath()
 
@@ -322,6 +367,13 @@ struct AlertInboxView: View {
       }
       .navigationTitle("Alerts")
       .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          if showingCachedData {
+            Label("Cached", systemImage: "clock.arrow.circlepath")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
         ToolbarItem(placement: .topBarTrailing) {
           Picker("Status", selection: $selectedStatus) {
             Text("Open").tag(GatewayAlertStatus.open)
@@ -360,16 +412,26 @@ struct AlertInboxView: View {
     defer { isLoading = false }
 
     do {
-      alerts = try await model.chatClient.fetchAlerts(
+      let fetched = try await model.chatClient.fetchAlerts(
         baseURL: baseURL,
         token: model.gatewayToken,
         status: selectedStatus,
         limit: 50,
         before: nil
       )
+      alerts = fetched
+      model.alertCache.save(alerts: fetched, forStatus: selectedStatus)
+      showingCachedData = false
       errorMessage = nil
     } catch {
-      errorMessage = error.localizedDescription
+      // Fall back to the local cache when the network is unavailable.
+      if let cached = model.alertCache.load(forStatus: selectedStatus) {
+        alerts = cached.alerts
+        showingCachedData = true
+        errorMessage = nil
+      } else {
+        errorMessage = error.localizedDescription
+      }
     }
   }
 }
@@ -1016,95 +1078,111 @@ struct ChatView: View {
         if isLoadingAgents {
           ProgressView("Loading agents…")
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        if !agents.isEmpty {
-          Picker("Agent", selection: $selectedAgentID) {
-            if let defaultName = agents.first?.name {
-              Text("Auto-select (\(defaultName))").tag(Optional<String>.none)
-            }
-            ForEach(agents) { agent in
-              Text("\(agent.icon ?? "🤖") \(agent.name)").tag(Optional(agent.id))
+        } else if agents.isEmpty, let agentsError = errorMessage, !isSending {
+          // Full-screen error state when agents fail to load and chat is idle.
+          VStack(spacing: 12) {
+            Image(systemName: "wifi.slash")
+              .font(.largeTitle)
+              .foregroundStyle(.secondary)
+            Text(agentsError)
+              .multilineTextAlignment(.center)
+              .foregroundStyle(.secondary)
+            Button("Retry") {
+              errorMessage = nil
+              Task { await loadAgents() }
             }
           }
-          .pickerStyle(.menu)
-          .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        if let threadID {
-          Text("Thread: \(threadID)")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        ScrollView {
-          LazyVStack(alignment: .leading, spacing: 8) {
-            if messages.isEmpty {
-              Text("Send a prompt to start chatting.")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-              ForEach(messages) { message in
-                ChatMessageBubble(message: message)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .padding()
+        } else {
+          if !agents.isEmpty {
+            Picker("Agent", selection: $selectedAgentID) {
+              if let defaultName = agents.first?.name {
+                Text("Auto-select (\(defaultName))").tag(Optional<String>.none)
+              }
+              ForEach(agents) { agent in
+                Text("\(agent.icon ?? "🤖") \(agent.name)").tag(Optional(agent.id))
               }
             }
-          }
-        }
-
-        if let errorMessage {
-          Text(errorMessage)
-            .font(.footnote)
-            .foregroundStyle(.red)
+            .pickerStyle(.menu)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
+          }
 
-        HStack(alignment: .bottom, spacing: 8) {
-          TextField("Type a prompt…", text: $prompt, axis: .vertical)
-            .lineLimit(1...4)
-            .textInputAutocapitalization(.sentences)
-            .autocorrectionDisabled(false)
+          if let threadID {
+            Text("Thread: \(threadID)")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
 
-          #if canImport(Speech)
-          Button {
-            Task {
-              if speechController.isRecording {
-                speechController.stopRecording()
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+              if messages.isEmpty {
+                Text("Send a prompt to start chatting.")
+                  .foregroundStyle(.secondary)
+                  .frame(maxWidth: .infinity, alignment: .leading)
               } else {
-                await speechController.requestPermissions()
-                guard speechController.recognitionState != .permissionDenied,
-                      speechController.recognitionState != .unavailable
-                else { return }
-                do {
-                  try speechController.startRecording()
-                } catch {
-                  errorMessage = error.localizedDescription
+                ForEach(messages) { message in
+                  ChatMessageBubble(message: message)
                 }
               }
             }
-          } label: {
-            Image(systemName: speechController.isRecording ? "stop.circle.fill" : "mic.circle")
-              .imageScale(.large)
           }
-          .disabled(isSending)
-          .foregroundStyle(speechController.isRecording ? Color.red : Color.secondary)
-          #endif
 
-          if isSending {
-            Button("Cancel") {
-              streamingTask?.cancel()
-            }
-          } else {
+          if let errorMessage {
+            Text(errorMessage)
+              .font(.footnote)
+              .foregroundStyle(.red)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+
+          HStack(alignment: .bottom, spacing: 8) {
+            TextField("Type a prompt…", text: $prompt, axis: .vertical)
+              .lineLimit(1...4)
+              .textInputAutocapitalization(.sentences)
+              .autocorrectionDisabled(false)
+
+            #if canImport(Speech)
             Button {
-              streamingTask = Task {
-                await sendPrompt()
+              Task {
+                if speechController.isRecording {
+                  speechController.stopRecording()
+                } else {
+                  await speechController.requestPermissions()
+                  guard speechController.recognitionState != .permissionDenied,
+                        speechController.recognitionState != .unavailable
+                  else { return }
+                  do {
+                    try speechController.startRecording()
+                  } catch {
+                    errorMessage = error.localizedDescription
+                  }
+                }
               }
             } label: {
-              Text("Send")
+              Image(systemName: speechController.isRecording ? "stop.circle.fill" : "mic.circle")
+                .imageScale(.large)
             }
-            .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(isSending)
+            .foregroundStyle(speechController.isRecording ? Color.red : Color.secondary)
+            #endif
+
+            if isSending {
+              Button("Cancel") {
+                streamingTask?.cancel()
+              }
+            } else {
+              Button {
+                streamingTask = Task {
+                  await sendPrompt()
+                }
+              } label: {
+                Text("Send")
+              }
+              .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
           }
-        }
+        } // end else (agents loaded or chat active)
       }
       .padding()
       .navigationTitle("Chat")
@@ -1328,6 +1406,7 @@ private func copyToClipboard(_ text: String) {
 struct SettingsView: View {
   @ObservedObject var model: GatewayAppViewModel
   @State private var replacementToken = ""
+  @State private var isRetesting = false
 
   var body: some View {
     NavigationStack {
@@ -1337,10 +1416,32 @@ struct SettingsView: View {
           Text("Device: \(model.deviceName)")
           Text("Identity: \(model.connectionIdentity ?? "Unknown")")
           ConnectionStatusText(status: model.connectionStatus)
-          Button("Retest Connection") {
+          Button {
+            isRetesting = true
             Task {
               await model.checkConnection()
+              isRetesting = false
             }
+          } label: {
+            HStack(spacing: 6) {
+              Text("Retest Connection")
+              if isRetesting {
+                ProgressView()
+                  .controlSize(.small)
+              }
+            }
+          }
+          .disabled(isRetesting)
+        }
+
+        Section("Notifications") {
+          Picker("Push alerts", selection: $model.notificationPreference) {
+            ForEach(NotificationPreferenceLevel.allCases, id: \.self) { level in
+              Text(level.displayLabel).tag(level)
+            }
+          }
+          .onChange(of: model.notificationPreference) { _, newValue in
+            model.saveNotificationPreference(newValue)
           }
         }
 

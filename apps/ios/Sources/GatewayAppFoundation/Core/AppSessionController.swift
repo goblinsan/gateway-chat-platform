@@ -36,7 +36,11 @@ public final class AppSessionController {
     let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    let configuration = AppConfiguration(baseURLString: trimmedURL, deviceName: trimmedName)
+    let configuration = AppConfiguration(
+      baseURLString: trimmedURL,
+      deviceName: trimmedName,
+      notificationPreference: self.configuration.notificationPreference
+    )
 
     guard configuration.baseURL != nil else {
       throw GatewaySetupError.invalidBaseURL
@@ -91,6 +95,14 @@ public final class AppSessionController {
     _ = tokenStore.saveToken(trimmedToken)
     connectionStatus = .unknown
     connectionIdentity = nil
+  }
+
+  /// Persists a new notification preference level.
+  public func saveNotificationPreference(_ level: NotificationPreferenceLevel) {
+    var updated = configuration
+    updated.notificationPreference = level
+    configurationStore.save(updated)
+    configuration = updated
   }
 
   public func clearLocalData() {

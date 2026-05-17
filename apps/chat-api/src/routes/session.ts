@@ -4,6 +4,8 @@ import { getPrismaClient } from '../services/db'
 
 const APNS_TOKEN_PATTERN = /^[A-Fa-f0-9]{32,512}$/
 const IOS_PLATFORM = 'ios'
+const VALID_SEVERITY_LEVELS = new Set(['all', 'medium', 'high', 'critical', 'off'])
+const DEFAULT_NOTIFICATION_SEVERITY = 'high'
 
 function normalizeApnsToken(token: string): string {
   return token.trim().replace(/[<>\s]/g, '').toLowerCase()
@@ -19,6 +21,12 @@ function getDeviceName(headerValue: unknown, bodyValue?: string): string {
   return bodyDeviceName || headerDeviceName
 }
 
+function normalizeNotificationSeverity(raw: unknown): string {
+  if (typeof raw !== 'string') return DEFAULT_NOTIFICATION_SEVERITY
+  const trimmed = raw.trim().toLowerCase()
+  return VALID_SEVERITY_LEVELS.has(trimmed) ? trimmed : DEFAULT_NOTIFICATION_SEVERITY
+}
+
 export default async function sessionRoutes(app: FastifyInstance) {
   const prisma = getPrismaClient()
 
@@ -26,7 +34,14 @@ export default async function sessionRoutes(app: FastifyInstance) {
     return reply.send({ userId: req.userId })
   })
 
-  app.post<{ Body: { apnsToken: string; deviceName?: string } }>('/session/mobile-devices/apns', {
+  app.post<{
+    Body: {
+      apnsToken: string
+      deviceName?: string
+      notificationMinSeverity?: string
+      appVersion?: string
+    }
+  }>('/session/mobile-devices/apns', {
     schema: {
       body: {
         type: 'object',
@@ -34,6 +49,8 @@ export default async function sessionRoutes(app: FastifyInstance) {
         properties: {
           apnsToken: { type: 'string', minLength: 1, maxLength: 1024 },
           deviceName: { type: 'string', minLength: 1, maxLength: 128 },
+          notificationMinSeverity: { type: 'string', minLength: 1, maxLength: 32 },
+          appVersion: { type: 'string', minLength: 1, maxLength: 64 },
         },
       },
     },
@@ -47,6 +64,13 @@ export default async function sessionRoutes(app: FastifyInstance) {
     const tokenLast4 = normalizedToken.slice(-4)
     const now = new Date()
     const deviceName = getDeviceName(req.headers['x-gateway-device-name'], req.body.deviceName)
+    const notificationMinSeverity = normalizeNotificationSeverity(req.body.notificationMinSeverity)
+    const appVersion = req.body.appVersion?.trim() || null
+
+    // Log app version for debugging/analytics (do not include raw token).
+    if (appVersion) {
+      req.log.info({ userId: req.userId, platform: IOS_PLATFORM, appVersion }, 'APNs device registration with app version')
+    }
 
     const device = await prisma.mobileDevice.upsert({
       where: {
@@ -63,6 +87,8 @@ export default async function sessionRoutes(app: FastifyInstance) {
         tokenHash,
         tokenLast4,
         deviceName: deviceName || null,
+        notificationMinSeverity,
+        appVersion,
         createdAt: now,
         updatedAt: now,
         lastSeenAt: now,
@@ -70,6 +96,8 @@ export default async function sessionRoutes(app: FastifyInstance) {
       update: {
         tokenLast4,
         deviceName: deviceName || null,
+        notificationMinSeverity,
+        appVersion,
         updatedAt: now,
         lastSeenAt: now,
       },
@@ -81,6 +109,7 @@ export default async function sessionRoutes(app: FastifyInstance) {
       platform: device.platform,
       deviceName: device.deviceName ?? undefined,
       tokenLast4: device.tokenLast4,
+      notificationMinSeverity: device.notificationMinSeverity,
       updatedAt: device.updatedAt.toISOString(),
       lastSeenAt: device.lastSeenAt.toISOString(),
     })
