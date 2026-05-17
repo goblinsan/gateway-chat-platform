@@ -1059,6 +1059,7 @@ struct ChatView: View {
   @State private var isSending = false
   @State private var errorMessage: String?
   @State private var streamingTask: Task<Void, Never>?
+  @FocusState private var isPromptFocused: Bool
   #if canImport(Speech)
   @StateObject private var speechController = SpeechRecognitionController()
   #endif
@@ -1128,6 +1129,11 @@ struct ChatView: View {
               }
             }
           }
+          .scrollDismissesKeyboard(.interactively)
+          .contentShape(Rectangle())
+          .onTapGesture {
+            isPromptFocused = false
+          }
 
           if let errorMessage {
             Text(errorMessage)
@@ -1141,6 +1147,7 @@ struct ChatView: View {
               .lineLimit(1...4)
               .textInputAutocapitalization(.sentences)
               .autocorrectionDisabled(false)
+              .focused($isPromptFocused)
 
             #if canImport(Speech)
             Button {
@@ -1186,6 +1193,16 @@ struct ChatView: View {
       }
       .padding()
       .navigationTitle("Chat")
+      .toolbar {
+        #if os(iOS)
+        ToolbarItemGroup(placement: .keyboard) {
+          Spacer()
+          Button("Done") {
+            isPromptFocused = false
+          }
+        }
+        #endif
+      }
       #if canImport(Speech)
       .onChange(of: speechController.isRecording) { _, isNowRecording in
         if !isNowRecording, !speechController.transcript.isEmpty {
@@ -1264,6 +1281,7 @@ struct ChatView: View {
     let userMessage = ChatMessageRow(role: .user, content: trimmedPrompt)
     messages.append(userMessage)
     prompt = ""
+    isPromptFocused = false
     isSending = true
     errorMessage = nil
     defer { isSending = false }
