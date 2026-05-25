@@ -434,3 +434,110 @@ async function postApprovalDecision(
     throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
   }
 }
+
+// ----------------------------------------------------------------------------
+// Per-user thread browsing
+//
+// These helpers proxy chat-api's /threads routes to agent-service's
+// /internal/threads endpoints so the web chat-ui and the iOS GatewayApp can
+// list, load, rename, and delete a user's prior conversations (which are
+// persisted server-side as agent-service sessions/runs).
+// ----------------------------------------------------------------------------
+
+export interface AgentServiceThreadSummary {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  message_count: number
+  last_snippet?: string
+  last_agent_id?: string
+}
+
+export interface AgentServiceThreadMessage {
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+  run_id?: string
+  agent_id?: string
+}
+
+function buildUserHeaders(userId: string, accept = 'application/json'): Record<string, string> {
+  return { ...buildHeaders(accept), 'X-User-ID': userId }
+}
+
+function requireAgentServiceUrl(): string {
+  const env = getEnv()
+  if (!env.AGENT_SERVICE_URL) {
+    throw new AgentServiceError('AGENT_SERVICE_URL is not configured: cannot reach agent-service')
+  }
+  return env.AGENT_SERVICE_URL
+}
+
+export async function fetchThreadsFromAgentService(
+  userId: string,
+  limit?: number,
+): Promise<AgentServiceThreadSummary[]> {
+  const base = requireAgentServiceUrl()
+  const url = new URL(`${base}/internal/threads`)
+  if (limit && limit > 0) url.searchParams.set('limit', String(limit))
+  const res = await fetchWithTimeout(url.toString(), {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { threads?: AgentServiceThreadSummary[] }
+  return body.threads ?? []
+}
+
+export async function fetchThreadFromAgentService(
+  userId: string,
+  threadId: string,
+): Promise<{ threadId: string; messages: AgentServiceThreadMessage[] }> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/threads/${encodeURIComponent(threadId)}`, {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { thread_id?: string; messages?: AgentServiceThreadMessage[] }
+  return { threadId: body.thread_id ?? threadId, messages: body.messages ?? [] }
+}
+
+export async function renameThreadInAgentService(
+  userId: string,
+  threadId: string,
+  title: string,
+): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/threads/${encodeURIComponent(threadId)}`, {
+    method: 'PATCH',
+    headers: buildUserHeaders(userId),
+    body: JSON.stringify({ title }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
+
+export async function deleteThreadInAgentService(
+  userId: string,
+  threadId: string,
+): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/threads/${encodeURIComponent(threadId)}`, {
+    method: 'DELETE',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
