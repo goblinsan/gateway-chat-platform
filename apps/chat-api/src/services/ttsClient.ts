@@ -1,6 +1,10 @@
 import { getEnv } from '../config/env'
 
-const TTS_TIMEOUT_MS = 30_000
+const TTS_TIMEOUT_MS = (() => {
+  const raw = process.env.TTS_TIMEOUT_MS
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 120_000
+})()
 const MAX_TEXT_LENGTH = 5000
 
 interface TtsHealthResult {

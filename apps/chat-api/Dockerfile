@@ -20,7 +20,7 @@ RUN pnpm --filter @gateway/chat-api build
 
 FROM node:20-bookworm-slim
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && apt-get install -y --no-install-recommends openssl ca-certificates wget git \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable \
   && corepack prepare pnpm@9 --activate
