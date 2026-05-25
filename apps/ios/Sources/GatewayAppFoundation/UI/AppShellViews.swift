@@ -1219,39 +1219,45 @@ struct ChatView: View {
   var body: some View {
     NavigationStack {
       VStack(spacing: 12) {
-        if isLoadingAgents {
-          ProgressView("Loading agents…")
-            .frame(maxWidth: .infinity, alignment: .leading)
+        // Agent picker area — always renders so the rest of the UI is interactive
+        // immediately, even while the agent list is still loading or failed to load.
+        if isLoadingAgents && agents.isEmpty {
+          HStack(spacing: 8) {
+            ProgressView()
+            Text("Loading agents…")
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
         } else if agents.isEmpty, let agentsError = errorMessage, !isSending {
-          // Full-screen error state when agents fail to load and chat is idle.
-          VStack(spacing: 12) {
+          HStack(spacing: 8) {
             Image(systemName: "wifi.slash")
-              .font(.largeTitle)
               .foregroundStyle(.secondary)
             Text(agentsError)
-              .multilineTextAlignment(.center)
+              .font(.footnote)
               .foregroundStyle(.secondary)
+              .lineLimit(2)
+            Spacer()
             Button("Retry") {
               errorMessage = nil
               Task { await loadAgents() }
             }
+            .buttonStyle(.bordered)
           }
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .padding()
-        } else {
-          if !agents.isEmpty {
-            Picker("Agent", selection: $selectedAgentID) {
-              if let defaultName = agents.first?.name {
-                Text("Auto-select (\(defaultName))").tag(Optional<String>.none)
-              }
-              ForEach(agents) { agent in
-                Text("\(agent.icon ?? "🤖") \(agent.name)").tag(Optional(agent.id))
-              }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        } else if !agents.isEmpty {
+          Picker("Agent", selection: $selectedAgentID) {
+            if let defaultName = agents.first?.name {
+              Text("Auto-select (\(defaultName))").tag(Optional<String>.none)
             }
-            .pickerStyle(.menu)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(agents) { agent in
+              Text("\(agent.icon ?? "🤖") \(agent.name)").tag(Optional(agent.id))
+            }
           }
+          .pickerStyle(.menu)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
 
+        Group {
           if let threadID {
             Text("Thread: \(threadID)")
               .font(.caption)
@@ -1337,7 +1343,7 @@ struct ChatView: View {
               .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
           }
-        } // end else (agents loaded or chat active)
+        } // end Group (always-rendered chat body)
       }
       .padding()
       .contentShape(Rectangle())

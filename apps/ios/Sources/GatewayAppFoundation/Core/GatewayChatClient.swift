@@ -409,19 +409,42 @@ public enum GatewayChatError: LocalizedError, Equatable, Sendable {
 public final class GatewayChatClient: GatewayChatServing, Sendable {
   private static let apnsTokenPattern = "^[a-f0-9]{32,512}$"
   private let session: URLSession
-  /// Timeout for regular (non-streaming) API requests in seconds. Default: 30.
+  /// Timeout for regular (non-streaming) API requests in seconds. Default: 12.
   private let requestTimeout: TimeInterval
   /// Timeout for streaming API requests in seconds. Default: 90.
   private let streamTimeout: TimeInterval
 
   public init(
-    session: URLSession = .shared,
-    requestTimeout: TimeInterval = 30,
+    session: URLSession? = nil,
+    requestTimeout: TimeInterval = 12,
     streamTimeout: TimeInterval = 90
   ) {
-    self.session = session
+    self.session = session ?? GatewayChatClient.makeDefaultSession(
+      requestTimeout: requestTimeout,
+      streamTimeout: streamTimeout
+    )
     self.requestTimeout = requestTimeout
     self.streamTimeout = streamTimeout
+  }
+
+  /// Builds a URLSession tuned for the gateway:
+  /// - Tighter per-request timeout so a stalled QUIC/HTTP3 handshake fails fast
+  ///   and the system falls back to HTTP/2 over TCP instead of hanging the UI.
+  /// - `waitsForConnectivity = false` so we surface errors immediately when the
+  ///   device is offline rather than queuing requests indefinitely.
+  /// - Higher per-host connection cap so parallel startup requests
+  ///   (agents, voices, threads) don't serialize behind one warming connection.
+  private static func makeDefaultSession(
+    requestTimeout: TimeInterval,
+    streamTimeout: TimeInterval
+  ) -> URLSession {
+    let config = URLSessionConfiguration.default
+    config.timeoutIntervalForRequest = requestTimeout
+    config.timeoutIntervalForResource = max(streamTimeout, requestTimeout * 2)
+    config.waitsForConnectivity = false
+    config.httpMaximumConnectionsPerHost = 6
+    config.requestCachePolicy = .reloadIgnoringLocalCacheData
+    return URLSession(configuration: config)
   }
 
   public func fetchAgents(baseURL: URL, token: String?) async throws -> [GatewayAgentSummary] {
