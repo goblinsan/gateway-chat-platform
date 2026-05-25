@@ -10,6 +10,71 @@ public struct GatewayAgentSummary: Decodable, Equatable, Identifiable, Sendable 
   public let enabled: Bool?
 }
 
+// MARK: - Thread (cross-device chat sync) models
+
+/// Compact summary of a server-persisted chat thread, used to render the
+/// in-app thread list / sidebar that lets the user switch between previous
+/// conversations.  Backed by agent-service sessions/runs and proxied through
+/// chat-api's `/api/threads` route.
+public struct GatewayThreadSummary: Decodable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let title: String
+  public let createdAt: String
+  public let updatedAt: String
+  public let messageCount: Int
+  public let lastSnippet: String?
+  public let lastAgentId: String?
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case title
+    case createdAt = "created_at"
+    case updatedAt = "updated_at"
+    case messageCount = "message_count"
+    case lastSnippet = "last_snippet"
+    case lastAgentId = "last_agent_id"
+  }
+}
+
+/// A single user/assistant message reconstructed from a run row when loading
+/// a thread back into the app's chat view.
+public struct GatewayThreadMessage: Decodable, Equatable, Sendable {
+  public let role: String
+  public let content: String
+  public let createdAt: String
+  public let runId: String?
+  public let agentId: String?
+
+  enum CodingKeys: String, CodingKey {
+    case role
+    case content
+    case createdAt = "created_at"
+    case runId = "run_id"
+    case agentId = "agent_id"
+  }
+}
+
+// MARK: - TTS models
+
+/// A TTS voice option returned by the gateway, used to populate the voice
+/// picker in Settings.
+public struct GatewayVoice: Decodable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let name: String?
+}
+
+public struct GatewayVoicesResult: Decodable, Equatable, Sendable {
+  public let enabled: Bool
+  public let voices: [GatewayVoice]
+}
+
+/// Raw audio response from the synthesize endpoint, including the server's
+/// reported content type so the caller can hand it to AVAudioPlayer.
+public struct GatewaySynthesizedSpeech: Equatable, Sendable {
+  public let audio: Data
+  public let contentType: String
+}
+
 // MARK: - Alert models
 
 /// Severity level for a gateway alert.
@@ -255,6 +320,58 @@ public protocol GatewayChatServing: Sendable {
     token: String?,
     approvalID: String
   ) async throws -> GatewayActionApproval
+
+  // MARK: - Threads (chat sync across devices)
+
+  /// Fetch the list of chat threads owned by the current user, newest activity
+  /// first.  Backed by `/api/threads`.
+  func fetchThreads(
+    baseURL: URL,
+    token: String?,
+    limit: Int?
+  ) async throws -> [GatewayThreadSummary]
+
+  /// Fetch the full message history for a single thread.
+  func fetchThread(
+    baseURL: URL,
+    token: String?,
+    threadID: String
+  ) async throws -> [GatewayThreadMessage]
+
+  /// Rename a thread (updates the title shown in the sidebar).
+  func renameThread(
+    baseURL: URL,
+    token: String?,
+    threadID: String,
+    title: String
+  ) async throws
+
+  /// Delete a thread and its message history.
+  func deleteThread(
+    baseURL: URL,
+    token: String?,
+    threadID: String
+  ) async throws
+
+  // MARK: - TTS
+
+  /// Fetch the list of available TTS voices.  Returns `enabled: false` when
+  /// the gateway has TTS disabled, in which case callers should hide the
+  /// voice picker and Speak buttons.
+  func fetchVoices(
+    baseURL: URL,
+    token: String?
+  ) async throws -> GatewayVoicesResult
+
+  /// Synthesize speech for `text`, optionally with a specific voice id.
+  /// Returns the raw audio buffer plus its server-reported content type so
+  /// the caller can hand it to a player (e.g. AVAudioPlayer).
+  func synthesizeSpeech(
+    baseURL: URL,
+    token: String?,
+    text: String,
+    voice: String?
+  ) async throws -> GatewaySynthesizedSpeech
 }
 
 public enum GatewayChatError: LocalizedError, Equatable, Sendable {
@@ -777,6 +894,147 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     return decoded.approval
   }
 
+  // MARK: - Thread endpoints
+
+  public func fetchThreads(
+    baseURL: URL,
+    token: String?,
+    limit: Int? = nil
+  ) async throws -> [GatewayThreadSummary] {
+    guard let base = endpointURL(baseURL: baseURL, endpointPath: "/api/threads") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var url = base
+    if let limit, limit > 0 {
+      url = URL(string: base.absoluteString + "?limit=\(limit)") ?? base
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let decoded = try JSONDecoder().decode(ThreadsListResponse.self, from: data)
+    return decoded.threads
+  }
+
+  public func fetchThread(
+    baseURL: URL,
+    token: String?,
+    threadID: String
+  ) async throws -> [GatewayThreadMessage] {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/threads/\(threadID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let decoded = try JSONDecoder().decode(ThreadDetailResponse.self, from: data)
+    return decoded.messages
+  }
+
+  public func renameThread(
+    baseURL: URL,
+    token: String?,
+    threadID: String,
+    title: String
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/threads/\(threadID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "PATCH"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(["title": title])
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  public func deleteThread(
+    baseURL: URL,
+    token: String?,
+    threadID: String
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/threads/\(threadID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "DELETE"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  // MARK: - TTS endpoints
+
+  public func fetchVoices(
+    baseURL: URL,
+    token: String?
+  ) async throws -> GatewayVoicesResult {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/tts/voices") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    if httpResponse.statusCode == 409 {
+      // TTS disabled on this gateway.
+      return GatewayVoicesResult(enabled: false, voices: [])
+    }
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    return try JSONDecoder().decode(GatewayVoicesResult.self, from: data)
+  }
+
+  public func synthesizeSpeech(
+    baseURL: URL,
+    token: String?,
+    text: String,
+    voice: String?
+  ) async throws -> GatewaySynthesizedSpeech {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/tts") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    var payload: [String: String] = ["text": text]
+    if let voice, !voice.isEmpty { payload["voice"] = voice }
+    request.httpBody = try JSONEncoder().encode(payload)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "audio/mpeg"
+    return GatewaySynthesizedSpeech(audio: data, contentType: contentType)
+  }
+
   private func validateHTTPResponse(_ response: URLResponse) throws -> HTTPURLResponse {
     guard let httpResponse = response as? HTTPURLResponse else {
       throw GatewayChatError.invalidResponse
@@ -877,4 +1135,12 @@ private struct ApprovalsListResponse: Decodable {
 
 private struct ApprovalDetailResponse: Decodable {
   let approval: GatewayActionApproval
+}
+
+private struct ThreadsListResponse: Decodable {
+  let threads: [GatewayThreadSummary]
+}
+
+private struct ThreadDetailResponse: Decodable {
+  let messages: [GatewayThreadMessage]
 }

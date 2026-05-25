@@ -26,6 +26,22 @@ public final class GatewayAppViewModel: ObservableObject {
   /// Current notification preference level, persisted across launches.
   @Published public var notificationPreference: NotificationPreferenceLevel
 
+  // MARK: - TTS state
+
+  /// Whether the gateway has TTS enabled (set after first voices fetch).
+  @Published public var ttsEnabled: Bool = false
+  /// Voices reported by the gateway for the picker.
+  @Published public var availableVoices: [GatewayVoice] = []
+  /// Persisted voice selection used for all speech synthesis.  `nil` means
+  /// "use server default".
+  @Published public var selectedVoiceID: String?
+  /// Active TTS playback controller — also exposes `isSpeaking` for the UI.
+  #if canImport(AVFoundation)
+  public let ttsController = TTSController()
+  #endif
+
+  private static let selectedVoiceDefaultsKey = "gateway.tts.selectedVoiceID"
+
   private let session: AppSessionController
   let chatClient: GatewayChatServing
   let alertCache: LocalAlertCache
@@ -46,6 +62,7 @@ public final class GatewayAppViewModel: ObservableObject {
     self.pendingAlertID = nil
     self.pendingApprovalID = nil
     self.notificationPreference = .highAndAbove
+    self.selectedVoiceID = UserDefaults.standard.string(forKey: Self.selectedVoiceDefaultsKey)
     syncFromSession()
   }
 
@@ -92,6 +109,64 @@ public final class GatewayAppViewModel: ObservableObject {
     alertCache.clear()
     syncFromSession()
     apiToken = ""
+  }
+
+  // MARK: - TTS
+
+  /// Refresh the voice list from the gateway.  Updates `ttsEnabled` based on
+  /// the server response so callers can hide Speak buttons when disabled.
+  public func loadVoices() async {
+    guard let baseURL = gatewayBaseURL else { return }
+    do {
+      let result = try await chatClient.fetchVoices(baseURL: baseURL, token: gatewayToken)
+      availableVoices = result.voices
+      ttsEnabled = result.enabled
+      // Drop a stale selection if the server no longer offers that voice.
+      if let id = selectedVoiceID, !result.voices.contains(where: { $0.id == id }) {
+        setSelectedVoice(nil)
+      }
+    } catch {
+      ttsEnabled = false
+    }
+  }
+
+  /// Persist the user's voice choice across launches.
+  public func setSelectedVoice(_ voiceID: String?) {
+    selectedVoiceID = voiceID
+    let defaults = UserDefaults.standard
+    if let voiceID, !voiceID.isEmpty {
+      defaults.set(voiceID, forKey: Self.selectedVoiceDefaultsKey)
+    } else {
+      defaults.removeObject(forKey: Self.selectedVoiceDefaultsKey)
+    }
+  }
+
+  /// Synthesize and play `text` using the currently selected voice.  Silently
+  /// no-ops when TTS is disabled or the gateway is unreachable.
+  public func speak(text: String) async {
+    #if canImport(AVFoundation)
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, let baseURL = gatewayBaseURL else { return }
+    do {
+      let result = try await chatClient.synthesizeSpeech(
+        baseURL: baseURL,
+        token: gatewayToken,
+        text: trimmed,
+        voice: selectedVoiceID
+      )
+      ttsController.play(audio: result.audio, contentType: result.contentType)
+    } catch {
+      // Surface via the controller's lastError so the UI can show it if it
+      // chooses; otherwise stay quiet for fire-and-forget auto-speak.
+      ttsController.stop()
+    }
+    #endif
+  }
+
+  public func stopSpeaking() {
+    #if canImport(AVFoundation)
+    ttsController.stop()
+    #endif
   }
 
   private func syncFromSession() {
@@ -1092,6 +1167,41 @@ struct ChatView: View {
   @State private var isSending = false
   @State private var errorMessage: String?
   @State private var streamingTask: Task<Void, Never>?
+
+  // Thread browsing (cross-device chat sync) state.
+  @State private var threads: [GatewayThreadSummary] = []
+  @State private var isLoadingThreads = false
+  @State private var isLoadingThreadMessages = false
+  @State private var showingThreadList = false
+  @State private var threadErrorMessage: String?
+
+  /// Per-thread auto-speak preference, keyed by thread id (empty string for
+  /// the "new chat" pre-thread state).  Persisted in UserDefaults so the
+  /// toggle sticks across app launches.
+  @State private var autoSpeakByThread: [String: Bool] = [:]
+
+  private static let autoSpeakDefaultsKey = "gateway.tts.autoSpeakByThread"
+  private static let activeThreadIDDefaultsKey = "gateway.activeThreadID"
+
+  private var autoSpeakKey: String { threadID ?? "" }
+  private var autoSpeakEnabled: Bool { autoSpeakByThread[autoSpeakKey] ?? false }
+
+  /// Binding for the auto-speak Toggle: reads/writes the per-thread entry in
+  /// `autoSpeakByThread` and persists the whole dict so the preference
+  /// survives relaunches and follows the user across threads.
+  private var autoSpeakBinding: Binding<Bool> {
+    Binding(
+      get: { autoSpeakEnabled },
+      set: { newValue in
+        autoSpeakByThread[autoSpeakKey] = newValue
+        UserDefaults.standard.set(autoSpeakByThread, forKey: Self.autoSpeakDefaultsKey)
+        if !newValue {
+          model.stopSpeaking()
+        }
+      }
+    )
+  }
+
   @FocusState private var isPromptFocused: Bool
   #if canImport(Speech)
   @StateObject private var speechController = SpeechRecognitionController()
@@ -1157,7 +1267,12 @@ struct ChatView: View {
                   .frame(maxWidth: .infinity, alignment: .leading)
               } else {
                 ForEach(messages) { message in
-                  ChatMessageBubble(message: message)
+                  ChatMessageBubble(
+                    message: message,
+                    onSpeak: model.ttsEnabled ? { text in
+                      Task { await model.speak(text: text) }
+                    } : nil
+                  )
                 }
               }
             }
@@ -1252,6 +1367,23 @@ struct ChatView: View {
       .toolbar {
         #if os(macOS)
         ToolbarItem(placement: .automatic) {
+          Button {
+            showingThreadList = true
+            Task { await loadThreads() }
+          } label: {
+            Label("Threads", systemImage: "list.bullet.rectangle")
+          }
+          .disabled(isSending)
+        }
+        ToolbarItem(placement: .automatic) {
+          Button {
+            startNewChat()
+          } label: {
+            Label("New Chat", systemImage: "square.and.pencil")
+          }
+          .disabled(isSending)
+        }
+        ToolbarItem(placement: .automatic) {
           Button("Reload Agents") {
             Task {
               await loadAgents()
@@ -1259,7 +1391,43 @@ struct ChatView: View {
           }
           .disabled(isLoadingAgents || isSending)
         }
+        if model.ttsEnabled {
+          ToolbarItem(placement: .automatic) {
+            Toggle(isOn: autoSpeakBinding) {
+              Label("Auto-speak", systemImage: "speaker.wave.2")
+            }
+            .toggleStyle(.switch)
+          }
+          #if canImport(AVFoundation)
+          if model.ttsController.isSpeaking {
+            ToolbarItem(placement: .automatic) {
+              Button {
+                model.stopSpeaking()
+              } label: {
+                Label("Stop", systemImage: "stop.circle")
+              }
+            }
+          }
+          #endif
+        }
         #else
+        ToolbarItem(placement: .topBarLeading) {
+          Button {
+            showingThreadList = true
+            Task { await loadThreads() }
+          } label: {
+            Label("Threads", systemImage: "list.bullet.rectangle")
+          }
+          .disabled(isSending)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            startNewChat()
+          } label: {
+            Label("New Chat", systemImage: "square.and.pencil")
+          }
+          .disabled(isSending)
+        }
         ToolbarItem(placement: .topBarTrailing) {
           Button("Reload Agents") {
             Task {
@@ -1268,11 +1436,70 @@ struct ChatView: View {
           }
           .disabled(isLoadingAgents || isSending)
         }
+        if model.ttsEnabled {
+          ToolbarItem(placement: .topBarTrailing) {
+            Toggle(isOn: autoSpeakBinding) {
+              Label("Auto-speak", systemImage: "speaker.wave.2")
+            }
+            .toggleStyle(.button)
+          }
+          #if canImport(AVFoundation)
+          if model.ttsController.isSpeaking {
+            ToolbarItem(placement: .topBarTrailing) {
+              Button {
+                model.stopSpeaking()
+              } label: {
+                Label("Stop", systemImage: "stop.circle")
+              }
+            }
+          }
+          #endif
+        }
         #endif
+      }
+      .sheet(isPresented: $showingThreadList) {
+        ThreadListSheet(
+          threads: threads,
+          activeThreadID: threadID,
+          isLoading: isLoadingThreads,
+          errorMessage: threadErrorMessage,
+          onSelect: { selected in
+            showingThreadList = false
+            Task { await switchToThread(selected.id) }
+          },
+          onDelete: { toDelete in
+            Task { await deleteThread(toDelete.id) }
+          },
+          onRefresh: {
+            Task { await loadThreads() }
+          },
+          onDismiss: {
+            showingThreadList = false
+          }
+        )
       }
     }
     .task {
+      // Restore the last active thread so users land back where they left off.
+      if threadID == nil,
+         let stored = UserDefaults.standard.string(forKey: Self.activeThreadIDDefaultsKey),
+         !stored.isEmpty {
+        threadID = stored
+        await loadActiveThreadMessages()
+      }
+      // Restore per-thread auto-speak preferences.
+      if let stored = UserDefaults.standard.dictionary(forKey: Self.autoSpeakDefaultsKey) as? [String: Bool] {
+        autoSpeakByThread = stored
+      }
       await loadAgents()
+      await model.loadVoices()
+    }
+    .onChange(of: threadID) { _, newValue in
+      if let newValue, !newValue.isEmpty {
+        UserDefaults.standard.set(newValue, forKey: Self.activeThreadIDDefaultsKey)
+      } else {
+        UserDefaults.standard.removeObject(forKey: Self.activeThreadIDDefaultsKey)
+      }
     }
   }
 
@@ -1405,11 +1632,202 @@ struct ChatView: View {
         errorMessage = error.localizedDescription
       }
     }
+
+    // Refresh the thread list in the background so the sidebar shows the
+    // updated last-snippet and new thread (if this was the first send).
+    Task { await loadThreads() }
+
+    // Auto-speak the assistant reply if enabled for the current thread.
+    if autoSpeakEnabled, model.ttsEnabled,
+       let last = messages.last, last.role == .assistant, !last.content.isEmpty {
+      let spoken = last.content
+      Task { await model.speak(text: spoken) }
+    }
+  }
+
+  // MARK: - Thread browsing helpers
+
+  private func startNewChat() {
+    streamingTask?.cancel()
+    threadID = nil
+    messages = []
+    errorMessage = nil
+    prompt = ""
+  }
+
+  private func loadThreads() async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+    isLoadingThreads = true
+    defer { isLoadingThreads = false }
+    do {
+      threads = try await model.chatClient.fetchThreads(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        limit: 100
+      )
+      threadErrorMessage = nil
+    } catch {
+      threadErrorMessage = error.localizedDescription
+    }
+  }
+
+  private func switchToThread(_ id: String) async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+    streamingTask?.cancel()
+    isLoadingThreadMessages = true
+    defer { isLoadingThreadMessages = false }
+    do {
+      let history = try await model.chatClient.fetchThread(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        threadID: id
+      )
+      threadID = id
+      messages = history.map { msg in
+        ChatMessageRow(
+          role: msg.role == "assistant" ? .assistant : .user,
+          content: msg.content
+        )
+      }
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func loadActiveThreadMessages() async {
+    guard let id = threadID else { return }
+    await switchToThread(id)
+  }
+
+  private func deleteThread(_ id: String) async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+    do {
+      try await model.chatClient.deleteThread(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        threadID: id
+      )
+      threads.removeAll { $0.id == id }
+      if threadID == id {
+        startNewChat()
+      }
+    } catch {
+      threadErrorMessage = error.localizedDescription
+    }
+  }
+}
+
+/// Sheet listing the user's previous chat threads so they can switch between
+/// them.  Mirrors the web chat-ui sidebar so threads created on either client
+/// are visible on the other.
+struct ThreadListSheet: View {
+  let threads: [GatewayThreadSummary]
+  let activeThreadID: String?
+  let isLoading: Bool
+  let errorMessage: String?
+  let onSelect: (GatewayThreadSummary) -> Void
+  let onDelete: (GatewayThreadSummary) -> Void
+  let onRefresh: () -> Void
+  let onDismiss: () -> Void
+
+  var body: some View {
+    NavigationStack {
+      Group {
+        if isLoading && threads.isEmpty {
+          ProgressView("Loading threads…")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let errorMessage, threads.isEmpty {
+          VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+              .font(.largeTitle)
+              .foregroundStyle(.secondary)
+            Text(errorMessage)
+              .multilineTextAlignment(.center)
+              .foregroundStyle(.secondary)
+            Button("Retry", action: onRefresh)
+          }
+          .padding()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if threads.isEmpty {
+          VStack(spacing: 8) {
+            Image(systemName: "bubble.left.and.bubble.right")
+              .font(.largeTitle)
+              .foregroundStyle(.secondary)
+            Text("No previous chats yet.")
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+          List {
+            ForEach(threads) { thread in
+              Button {
+                onSelect(thread)
+              } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                  HStack {
+                    Text(thread.title)
+                      .font(.headline)
+                      .lineLimit(1)
+                    Spacer()
+                    if thread.id == activeThreadID {
+                      Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.tint)
+                    }
+                  }
+                  if let snippet = thread.lastSnippet, !snippet.isEmpty {
+                    Text(snippet)
+                      .font(.subheadline)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(2)
+                  }
+                  Text("\(thread.messageCount) messages")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                  onDelete(thread)
+                } label: {
+                  Label("Delete", systemImage: "trash")
+                }
+              }
+            }
+          }
+          .listStyle(.plain)
+        }
+      }
+      .navigationTitle("Threads")
+      #if os(iOS)
+      .navigationBarTitleDisplayMode(.inline)
+      #endif
+      .toolbar {
+        #if os(macOS)
+        ToolbarItem(placement: .automatic) {
+          Button("Refresh", action: onRefresh).disabled(isLoading)
+        }
+        ToolbarItem(placement: .automatic) {
+          Button("Done", action: onDismiss)
+        }
+        #else
+        ToolbarItem(placement: .topBarLeading) {
+          Button("Refresh", action: onRefresh).disabled(isLoading)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Done", action: onDismiss)
+        }
+        #endif
+      }
+    }
   }
 }
 
 struct ChatMessageBubble: View {
   let message: ChatMessageRow
+  var onSpeak: ((String) -> Void)? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -1419,6 +1837,17 @@ struct ChatMessageBubble: View {
           .foregroundStyle(.secondary)
         Spacer()
         if message.role == .assistant {
+          if let onSpeak {
+            Button {
+              onSpeak(message.content)
+            } label: {
+              Label("Speak", systemImage: "speaker.wave.2")
+                .labelStyle(.iconOnly)
+            }
+            .font(.caption)
+            .buttonStyle(.borderless)
+            .disabled(message.content.isEmpty)
+          }
           Button("Copy") {
             copyToClipboard(message.content)
           }
@@ -1472,6 +1901,15 @@ struct SettingsView: View {
   @State private var revealToken = false
   @FocusState private var focusedField: Field?
 
+  /// Bridges the optional `selectedVoiceID` into the picker and persists
+  /// changes through the view model.
+  private var voiceBinding: Binding<String?> {
+    Binding(
+      get: { model.selectedVoiceID },
+      set: { model.setSelectedVoice($0) }
+    )
+  }
+
   var body: some View {
     NavigationStack {
       Form {
@@ -1509,6 +1947,20 @@ struct SettingsView: View {
           }
         }
 
+        if model.ttsEnabled {
+          Section("Voice") {
+            Picker("TTS voice", selection: voiceBinding) {
+              Text("Server default").tag(String?.none)
+              ForEach(model.availableVoices) { voice in
+                Text(voice.name ?? voice.id).tag(Optional(voice.id))
+              }
+            }
+            Button("Refresh voices") {
+              Task { await model.loadVoices() }
+            }
+          }
+        }
+
         Section("Credentials") {
           RevealableTokenField(
             title: "API Token",
@@ -1535,6 +1987,7 @@ struct SettingsView: View {
         if replacementToken.isEmpty {
           replacementToken = model.gatewayToken ?? ""
         }
+        await model.loadVoices()
       }
     }
   }
