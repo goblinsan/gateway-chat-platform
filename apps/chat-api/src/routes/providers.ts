@@ -23,18 +23,17 @@ export default async function providerRoutes(app: FastifyInstance) {
       { name: 'google', apiKey: env.GOOGLE_API_KEY, baseUrl: 'https://generativelanguage.googleapis.com' },
     ]
 
-    const results: ProviderTestResult[] = []
-
-    for (const p of providers) {
-      if (!p.baseUrl && !p.apiKey) {
-        results.push({ name: p.name, status: 'unconfigured' })
-        continue
-      }
-      const check = await checkProvider(p.name, p.baseUrl ?? '', p.apiKey)
-      // baseUrl is intentionally omitted from the response to avoid leaking
-      // internal infrastructure details to the browser (#55)
-      results.push({ name: p.name, ...check })
-    }
+    const results: ProviderTestResult[] = await Promise.all(
+      providers.map<Promise<ProviderTestResult>>(async (p) => {
+        if (!p.baseUrl && !p.apiKey) {
+          return { name: p.name, status: 'unconfigured' }
+        }
+        const check = await checkProvider(p.name, p.baseUrl ?? '', p.apiKey)
+        // baseUrl is intentionally omitted from the response to avoid leaking
+        // internal infrastructure details to the browser (#55)
+        return { name: p.name, ...check }
+      }),
+    )
 
     return reply.send({ providers: results })
   })

@@ -8,11 +8,12 @@ export async function checkProvider(
   name: string,
   baseUrl: string,
   _apiKey?: string,
+  timeoutMs: number = 1500,
 ): Promise<ProviderCheckResult> {
   const start = Date.now()
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 5000)
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
     const healthPath = name.startsWith('lm-studio') ? '/v1/models' : '/v1/models'
     const url = `${baseUrl}${healthPath}`
