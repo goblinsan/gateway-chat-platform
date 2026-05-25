@@ -52,7 +52,9 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
     env.MOBILE_SHARED_USER_ID?.trim() || env.CHAT_DEFAULT_USER_ID
 
   app.addHook('onRequest', async (req, reply) => {
-    const cfToken = req.headers['cf-access-jwt-assertion'] as string | undefined
+    const cfToken =
+      (req.headers['cf-access-jwt-assertion'] as string | undefined) ||
+      extractCfAuthorizationCookie(req.headers.cookie)
     if (cfToken) {
       try {
         const claims = decodeJwt(cfToken)
@@ -97,3 +99,23 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
     req.userId = env.CHAT_DEFAULT_USER_ID
   })
 })
+
+/**
+ * Cloudflare Access also sets the JWT as a `CF_Authorization` cookie on the
+ * browser; accept it as a fallback when the upstream proxy does not inject
+ * the header (e.g. Tunnel routes outside the Access policy).
+ */
+function extractCfAuthorizationCookie(cookieHeader: string | string[] | undefined): string | undefined {
+  if (!cookieHeader) return undefined
+  const raw = Array.isArray(cookieHeader) ? cookieHeader.join('; ') : cookieHeader
+  for (const part of raw.split(';')) {
+    const idx = part.indexOf('=')
+    if (idx < 0) continue
+    const name = part.slice(0, idx).trim()
+    if (name === 'CF_Authorization') {
+      const value = part.slice(idx + 1).trim()
+      return value || undefined
+    }
+  }
+  return undefined
+}
