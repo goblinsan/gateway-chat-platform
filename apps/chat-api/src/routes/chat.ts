@@ -197,6 +197,8 @@ export default async function chatRoutes(app: FastifyInstance) {
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
             modelParams: agent.endpointConfig?.modelParams,
+            userId: req.userId,
+            threadId,
           })
           usedProvider = agentServiceResult.usedProvider
           responseMessage = agentServiceResult.message
@@ -427,6 +429,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
             modelParams: agent.endpointConfig?.modelParams,
+            userId: req.userId,
             threadId,
           }, (event) => {
             if (event.type === 'token') {

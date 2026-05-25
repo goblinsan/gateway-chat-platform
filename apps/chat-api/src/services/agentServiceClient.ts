@@ -267,7 +267,7 @@ export async function streamFromAgentService(
 
 function isAutomation(request: AgentServiceRequest): boolean {
   return Boolean(
-    request.workflowId || request.workflowSource || request.deliveryMode || request.userId || request.channelId,
+    request.workflowId || request.workflowSource || request.deliveryMode || request.channelId,
   )
 }
 
