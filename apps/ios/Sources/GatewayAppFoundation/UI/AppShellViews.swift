@@ -1480,19 +1480,27 @@ struct ChatView: View {
       }
     }
     .task {
-      // Restore the last active thread so users land back where they left off.
-      if threadID == nil,
-         let stored = UserDefaults.standard.string(forKey: Self.activeThreadIDDefaultsKey),
-         !stored.isEmpty {
-        threadID = stored
-        await loadActiveThreadMessages()
-      }
-      // Restore per-thread auto-speak preferences.
+      // Restore per-thread auto-speak preferences synchronously so the
+      // toolbar Toggle reflects saved state before any network calls start.
       if let stored = UserDefaults.standard.dictionary(forKey: Self.autoSpeakDefaultsKey) as? [String: Bool] {
         autoSpeakByThread = stored
       }
-      await loadAgents()
-      await model.loadVoices()
+
+      // Fire the three startup network calls in parallel so a slow gateway
+      // on any one of them (thread history, voices) does not delay the
+      // others and leave the user staring at a spinner.
+      let restoredThreadID: String? = {
+        guard threadID == nil,
+              let stored = UserDefaults.standard.string(forKey: Self.activeThreadIDDefaultsKey),
+              !stored.isEmpty else { return nil }
+        return stored
+      }()
+
+      async let agentsTask: Void = loadAgents()
+      async let voicesTask: Void = model.loadVoices()
+      async let historyTask: Void = loadHistoryOnLaunch(restoredThreadID: restoredThreadID)
+
+      _ = await (agentsTask, voicesTask, historyTask)
     }
     .onChange(of: threadID) { _, newValue in
       if let newValue, !newValue.isEmpty {
@@ -1698,6 +1706,16 @@ struct ChatView: View {
   private func loadActiveThreadMessages() async {
     guard let id = threadID else { return }
     await switchToThread(id)
+  }
+
+  /// Helper used by the parallel startup task in `.task` so the work runs on
+  /// the main actor without triggering the "main actor-isolated property can
+  /// not be mutated from a nonisolated context" warning that async-let
+  /// closures otherwise produce.
+  private func loadHistoryOnLaunch(restoredThreadID: String?) async {
+    guard let restoredThreadID else { return }
+    threadID = restoredThreadID
+    await loadActiveThreadMessages()
   }
 
   private func deleteThread(_ id: String) async {
