@@ -3,11 +3,18 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public struct GatewayAgentSummary: Decodable, Equatable, Identifiable, Sendable {
+public struct GatewayAgentSummary: Codable, Equatable, Identifiable, Sendable {
   public let id: String
   public let name: String
   public let icon: String?
   public let enabled: Bool?
+
+  public init(id: String, name: String, icon: String?, enabled: Bool?) {
+    self.id = id
+    self.name = name
+    self.icon = icon
+    self.enabled = enabled
+  }
 }
 
 // MARK: - Thread (cross-device chat sync) models
@@ -34,6 +41,24 @@ public struct GatewayThreadSummary: Decodable, Equatable, Identifiable, Sendable
     case lastSnippet = "last_snippet"
     case lastAgentId = "last_agent_id"
   }
+
+  public init(
+    id: String,
+    title: String,
+    createdAt: String,
+    updatedAt: String,
+    messageCount: Int,
+    lastSnippet: String?,
+    lastAgentId: String?
+  ) {
+    self.id = id
+    self.title = title
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+    self.messageCount = messageCount
+    self.lastSnippet = lastSnippet
+    self.lastAgentId = lastAgentId
+  }
 }
 
 /// A single user/assistant message reconstructed from a run row when loading
@@ -52,6 +77,20 @@ public struct GatewayThreadMessage: Decodable, Equatable, Sendable {
     case runId = "run_id"
     case agentId = "agent_id"
   }
+
+  public init(
+    role: String,
+    content: String,
+    createdAt: String,
+    runId: String?,
+    agentId: String?
+  ) {
+    self.role = role
+    self.content = content
+    self.createdAt = createdAt
+    self.runId = runId
+    self.agentId = agentId
+  }
 }
 
 // MARK: - TTS models
@@ -61,11 +100,21 @@ public struct GatewayThreadMessage: Decodable, Equatable, Sendable {
 public struct GatewayVoice: Decodable, Equatable, Identifiable, Sendable {
   public let id: String
   public let name: String?
+
+  public init(id: String, name: String?) {
+    self.id = id
+    self.name = name
+  }
 }
 
 public struct GatewayVoicesResult: Decodable, Equatable, Sendable {
   public let enabled: Bool
   public let voices: [GatewayVoice]
+
+  public init(enabled: Bool, voices: [GatewayVoice]) {
+    self.enabled = enabled
+    self.voices = voices
+  }
 }
 
 /// Raw audio response from the synthesize endpoint, including the server's
@@ -139,6 +188,173 @@ public struct GatewayAlertDetail: Decodable, Equatable, Identifiable, Sendable {
   public var statusLevel: GatewayAlertStatus {
     GatewayAlertStatus(rawValue: status) ?? .open
   }
+
+  public init(
+    id: String,
+    title: String,
+    body: String?,
+    severity: String,
+    source: String,
+    sourceNode: String?,
+    sourceService: String?,
+    status: String,
+    relatedThreadId: String?,
+    relatedActionId: String?,
+    metadataJson: String?,
+    createdAt: String,
+    acknowledgedAt: String?,
+    resolvedAt: String?
+  ) {
+    self.id = id
+    self.title = title
+    self.body = body
+    self.severity = severity
+    self.source = source
+    self.sourceNode = sourceNode
+    self.sourceService = sourceService
+    self.status = status
+    self.relatedThreadId = relatedThreadId
+    self.relatedActionId = relatedActionId
+    self.metadataJson = metadataJson
+    self.createdAt = createdAt
+    self.acknowledgedAt = acknowledgedAt
+    self.resolvedAt = resolvedAt
+  }
+}
+
+// MARK: - Notification inbox models
+
+public struct GatewayNotificationSummary: Decodable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let userID: String
+  public let kind: String
+  public let title: String
+  public let body: String?
+  public let threadID: String?
+  public let sourceRunID: String?
+  public let payload: [String: String]?
+  public let readAt: String?
+  public let dismissedAt: String?
+  public let createdAt: String
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case userID = "user_id"
+    case kind
+    case title
+    case body
+    case threadID = "thread_id"
+    case sourceRunID = "source_run_id"
+    case payload
+    case readAt = "read_at"
+    case dismissedAt = "dismissed_at"
+    case createdAt = "created_at"
+  }
+
+  public var isRead: Bool {
+    readAt != nil
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(String.self, forKey: .id)
+    userID = try container.decode(String.self, forKey: .userID)
+    kind = try container.decode(String.self, forKey: .kind)
+    title = try container.decode(String.self, forKey: .title)
+    body = try container.decodeIfPresent(String.self, forKey: .body)
+    threadID = try container.decodeIfPresent(String.self, forKey: .threadID)
+    sourceRunID = try container.decodeIfPresent(String.self, forKey: .sourceRunID)
+    payload = try Self.decodePayload(from: container, forKey: .payload)
+    readAt = try container.decodeIfPresent(String.self, forKey: .readAt)
+    dismissedAt = try container.decodeIfPresent(String.self, forKey: .dismissedAt)
+    createdAt = try container.decode(String.self, forKey: .createdAt)
+  }
+
+  public init(
+    id: String,
+    userID: String,
+    kind: String,
+    title: String,
+    body: String?,
+    threadID: String?,
+    sourceRunID: String?,
+    payload: [String: String]?,
+    readAt: String?,
+    dismissedAt: String?,
+    createdAt: String
+  ) {
+    self.id = id
+    self.userID = userID
+    self.kind = kind
+    self.title = title
+    self.body = body
+    self.threadID = threadID
+    self.sourceRunID = sourceRunID
+    self.payload = payload
+    self.readAt = readAt
+    self.dismissedAt = dismissedAt
+    self.createdAt = createdAt
+  }
+
+  private static func decodePayload(
+    from container: KeyedDecodingContainer<CodingKeys>,
+    forKey key: CodingKeys
+  ) throws -> [String: String]? {
+    guard let rawPayload = try container.decodeIfPresent([String: String].self, forKey: key) else {
+      guard let jsonObject = try container.decodeIfPresent([String: JSONValue].self, forKey: key) else {
+        return nil
+      }
+      return jsonObject.reduce(into: [String: String]()) { partialResult, entry in
+        partialResult[entry.key] = entry.value.stringValue
+      }
+    }
+    return rawPayload
+  }
+}
+
+private enum JSONValue: Decodable, Equatable, Sendable {
+  case string(String)
+  case number(Double)
+  case bool(Bool)
+  case null
+  case array([JSONValue])
+  case object([String: JSONValue])
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if container.decodeNil() {
+      self = .null
+    } else if let value = try? container.decode(String.self) {
+      self = .string(value)
+    } else if let value = try? container.decode(Bool.self) {
+      self = .bool(value)
+    } else if let value = try? container.decode(Double.self) {
+      self = .number(value)
+    } else if let value = try? container.decode([String: JSONValue].self) {
+      self = .object(value)
+    } else if let value = try? container.decode([JSONValue].self) {
+      self = .array(value)
+    } else {
+      throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON payload value")
+    }
+  }
+
+  var stringValue: String {
+    switch self {
+    case let .string(value):
+      return value
+    case let .number(value):
+      return String(value)
+    case let .bool(value):
+      return value ? "true" : "false"
+    case .null:
+      return "null"
+    case let .array(value):
+      return value.map(\.stringValue).joined(separator: ", ")
+    case let .object(value):
+      return value.map { "\($0.key)=\($0.value.stringValue)" }.sorted().joined(separator: ", ")
+    }
+  }
 }
 
 // MARK: - Action Approval models
@@ -184,6 +400,40 @@ public struct GatewayActionApproval: Decodable, Equatable, Identifiable, Sendabl
   public var statusValue: GatewayApprovalStatus {
     GatewayApprovalStatus(rawValue: status) ?? .pending
   }
+
+  public init(
+    id: String,
+    userId: String,
+    title: String,
+    description: String?,
+    riskLevel: String,
+    actionType: String,
+    targetNode: String?,
+    targetService: String?,
+    proposedByAgentId: String?,
+    status: String,
+    expiresAt: String?,
+    createdAt: String,
+    decidedAt: String?,
+    decidedBy: String?,
+    metadataJson: String?
+  ) {
+    self.id = id
+    self.userId = userId
+    self.title = title
+    self.description = description
+    self.riskLevel = riskLevel
+    self.actionType = actionType
+    self.targetNode = targetNode
+    self.targetService = targetService
+    self.proposedByAgentId = proposedByAgentId
+    self.status = status
+    self.expiresAt = expiresAt
+    self.createdAt = createdAt
+    self.decidedAt = decidedAt
+    self.decidedBy = decidedBy
+    self.metadataJson = metadataJson
+  }
 }
 
 /// A single event emitted by the `/api/chat/stream` SSE endpoint.
@@ -228,10 +478,17 @@ public struct GatewayChatResult: Equatable, Sendable {
   public let agentID: String
   public let content: String
   public let threadID: String?
+
+  public init(agentID: String, content: String, threadID: String?) {
+    self.agentID = agentID
+    self.content = content
+    self.threadID = threadID
+  }
 }
 
 public protocol GatewayChatServing: Sendable {
   func fetchAgents(baseURL: URL, token: String?) async throws -> [GatewayAgentSummary]
+
   func registerAPNsDevice(
     baseURL: URL,
     token: String?,
@@ -291,6 +548,30 @@ public protocol GatewayChatServing: Sendable {
     token: String?,
     alertID: String
   ) async throws -> GatewayAlertDetail
+
+  // MARK: - Notification inbox
+
+  /// Fetch notification inbox items for the authenticated user.
+  func fetchNotifications(
+    baseURL: URL,
+    token: String?,
+    unreadOnly: Bool,
+    limit: Int
+  ) async throws -> [GatewayNotificationSummary]
+
+  /// Mark a notification as read.
+  func markNotificationRead(
+    baseURL: URL,
+    token: String?,
+    notificationID: String
+  ) async throws
+
+  /// Delete a notification from the inbox.
+  func deleteNotification(
+    baseURL: URL,
+    token: String?,
+    notificationID: String
+  ) async throws
 
   // MARK: - Action Approval
 
@@ -409,42 +690,19 @@ public enum GatewayChatError: LocalizedError, Equatable, Sendable {
 public final class GatewayChatClient: GatewayChatServing, Sendable {
   private static let apnsTokenPattern = "^[a-f0-9]{32,512}$"
   private let session: URLSession
-  /// Timeout for regular (non-streaming) API requests in seconds. Default: 12.
+  /// Timeout for regular (non-streaming) API requests in seconds. Default: 30.
   private let requestTimeout: TimeInterval
   /// Timeout for streaming API requests in seconds. Default: 90.
   private let streamTimeout: TimeInterval
 
   public init(
-    session: URLSession? = nil,
-    requestTimeout: TimeInterval = 12,
+    session: URLSession = .shared,
+    requestTimeout: TimeInterval = 30,
     streamTimeout: TimeInterval = 90
   ) {
-    self.session = session ?? GatewayChatClient.makeDefaultSession(
-      requestTimeout: requestTimeout,
-      streamTimeout: streamTimeout
-    )
+    self.session = session
     self.requestTimeout = requestTimeout
     self.streamTimeout = streamTimeout
-  }
-
-  /// Builds a URLSession tuned for the gateway:
-  /// - Tighter per-request timeout so a stalled QUIC/HTTP3 handshake fails fast
-  ///   and the system falls back to HTTP/2 over TCP instead of hanging the UI.
-  /// - `waitsForConnectivity = false` so we surface errors immediately when the
-  ///   device is offline rather than queuing requests indefinitely.
-  /// - Higher per-host connection cap so parallel startup requests
-  ///   (agents, voices, threads) don't serialize behind one warming connection.
-  private static func makeDefaultSession(
-    requestTimeout: TimeInterval,
-    streamTimeout: TimeInterval
-  ) -> URLSession {
-    let config = URLSessionConfiguration.default
-    config.timeoutIntervalForRequest = requestTimeout
-    config.timeoutIntervalForResource = max(streamTimeout, requestTimeout * 2)
-    config.waitsForConnectivity = false
-    config.httpMaximumConnectionsPerHost = 6
-    config.requestCachePolicy = .reloadIgnoringLocalCacheData
-    return URLSession(configuration: config)
   }
 
   public func fetchAgents(baseURL: URL, token: String?) async throws -> [GatewayAgentSummary] {
@@ -824,6 +1082,81 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     return decoded.alert
   }
 
+  // MARK: - Notification inbox endpoints
+
+  public func fetchNotifications(
+    baseURL: URL,
+    token: String?,
+    unreadOnly: Bool = false,
+    limit: Int = 50
+  ) async throws -> [GatewayNotificationSummary] {
+    var components = URLComponents()
+    components.queryItems = [
+      URLQueryItem(name: "unreadOnly", value: unreadOnly ? "true" : "false"),
+      URLQueryItem(name: "limit", value: String(limit)),
+    ]
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/notifications") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var urlWithQuery = url
+    if let query = components.percentEncodedQuery {
+      urlWithQuery = URL(string: url.absoluteString + "?" + query) ?? url
+    }
+
+    var request = URLRequest(url: urlWithQuery, timeoutInterval: requestTimeout)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(NotificationsListResponse.self, from: data)
+    return decoded.notifications.filter { $0.dismissedAt == nil }
+  }
+
+  public func markNotificationRead(
+    baseURL: URL,
+    token: String?,
+    notificationID: String
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/notifications/\(notificationID)/read") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  public func deleteNotification(
+    baseURL: URL,
+    token: String?,
+    notificationID: String
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/notifications/\(notificationID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "DELETE"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
   // MARK: - Action Approval endpoints
 
   public func fetchPendingApprovals(
@@ -1150,6 +1483,10 @@ private struct AlertsListResponse: Decodable {
 
 private struct AlertDetailResponse: Decodable {
   let alert: GatewayAlertDetail
+}
+
+private struct NotificationsListResponse: Decodable {
+  let notifications: [GatewayNotificationSummary]
 }
 
 private struct ApprovalsListResponse: Decodable {

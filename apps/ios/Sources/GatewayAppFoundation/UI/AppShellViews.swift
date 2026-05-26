@@ -12,6 +12,7 @@ import AVFoundation
 
 @MainActor
 public final class GatewayAppViewModel: ObservableObject {
+  @Published public private(set) var isBootstrappingSession = true
   @Published public var baseURL: String
   @Published public var apiToken: String
   @Published public var deviceName: String
@@ -62,12 +63,20 @@ public final class GatewayAppViewModel: ObservableObject {
     self.pendingAlertID = nil
     self.pendingApprovalID = nil
     self.notificationPreference = .highAndAbove
+    self.isBootstrappingSession = !session.hasLoadedPersistedState
     self.selectedVoiceID = UserDefaults.standard.string(forKey: Self.selectedVoiceDefaultsKey)
     syncFromSession()
   }
 
   public var isSetupComplete: Bool {
     session.isSetupComplete
+  }
+
+  public func bootstrapSessionIfNeeded() async {
+    guard isBootstrappingSession else { return }
+    await session.loadPersistedState()
+    syncFromSession()
+    isBootstrappingSession = false
   }
 
   var gatewayBaseURL: URL? {
@@ -188,11 +197,16 @@ public struct GatewayAppRootView: View {
 
   public var body: some View {
     Group {
-      if model.isSetupComplete {
+      if model.isBootstrappingSession {
+        ProgressView("Loading Gateway…")
+      } else if model.isSetupComplete {
         MainNavigationView(model: model)
       } else {
         SetupView(model: model)
       }
+    }
+    .task {
+      await model.bootstrapSessionIfNeeded()
     }
   }
 }
@@ -294,25 +308,33 @@ struct MainNavigationView: View {
 
   var body: some View {
     TabView(selection: $selectedTab) {
-      ChatView(model: model)
+      DeferredTabView(isActive: selectedTab == 0) {
+        ChatView(model: model)
+      }
         .tabItem {
           Label("Chat", systemImage: "bubble.left.and.bubble.right")
         }
         .tag(0)
 
-      AlertInboxView(model: model)
+      DeferredTabView(isActive: selectedTab == 1) {
+        AlertInboxView(model: model)
+      }
         .tabItem {
           Label("Alerts", systemImage: "bell")
         }
         .tag(1)
 
-      ApprovalInboxView(model: model)
+      DeferredTabView(isActive: selectedTab == 2) {
+        ApprovalInboxView(model: model)
+      }
         .tabItem {
           Label("Approvals", systemImage: "checkmark.seal")
         }
         .tag(2)
 
-      SettingsView(model: model)
+      DeferredTabView(isActive: selectedTab == 3) {
+        SettingsView(model: model)
+      }
         .tabItem {
           Label("Settings", systemImage: "gear")
         }
@@ -326,6 +348,21 @@ struct MainNavigationView: View {
     .onChange(of: model.pendingApprovalID) { _, approvalID in
       if approvalID != nil {
         selectedTab = 2
+      }
+    }
+  }
+}
+
+struct DeferredTabView<Content: View>: View {
+  let isActive: Bool
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    Group {
+      if isActive {
+        content()
+      } else {
+        Color.clear
       }
     }
   }
@@ -406,21 +443,17 @@ struct AlertRowView: View {
 /// The main alert inbox list view.
 struct AlertInboxView: View {
   @ObservedObject var model: GatewayAppViewModel
-  @State private var alerts: [GatewayAlertSummary] = []
-  @State private var selectedStatus: GatewayAlertStatus = .open
+  @State private var notifications: [GatewayNotificationSummary] = []
   @State private var isLoading = false
   @State private var errorMessage: String?
-  @State private var showingCachedData = false
-  @State private var selectedAlertID: String?
-  @State private var navigationPath = NavigationPath()
 
   var body: some View {
-    NavigationStack(path: $navigationPath) {
+    NavigationStack {
       Group {
-        if isLoading && alerts.isEmpty {
-          ProgressView("Loading alerts…")
+        if isLoading && notifications.isEmpty {
+          ProgressView("Loading inbox…")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let errorMessage, alerts.isEmpty {
+        } else if let errorMessage, notifications.isEmpty {
           VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle")
               .font(.largeTitle)
@@ -429,88 +462,88 @@ struct AlertInboxView: View {
               .multilineTextAlignment(.center)
               .foregroundStyle(.secondary)
             Button("Retry") {
-              Task { await loadAlerts() }
+              Task { await loadNotifications() }
             }
           }
           .padding()
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if alerts.isEmpty {
+        } else if notifications.isEmpty {
           VStack(spacing: 12) {
             Image(systemName: "bell.slash")
               .font(.largeTitle)
               .foregroundStyle(.secondary)
-            Text("No \(selectedStatus.rawValue) alerts")
+            Text("No notifications")
               .foregroundStyle(.secondary)
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-          List(alerts) { alert in
-            NavigationLink(value: alert.id) {
-              AlertRowView(alert: alert)
+          List(notifications) { notification in
+            VStack(alignment: .leading, spacing: 8) {
+              HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                  Text(notification.title)
+                    .font(.headline)
+                  Text(notification.kind.replacingOccurrences(of: "_", with: " "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !notification.isRead {
+                  Circle()
+                    .fill(.blue)
+                    .frame(width: 10, height: 10)
+                }
+              }
+
+              if let body = notification.body, !body.isEmpty {
+                Text(body)
+                  .font(.subheadline)
+                  .foregroundStyle(.primary)
+              }
+
+              HStack {
+                Text(notification.createdAt.alertFormattedDate())
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                Spacer()
+                if let threadID = notification.threadID, !threadID.isEmpty {
+                  Text(threadID)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                }
+              }
+            }
+            .padding(.vertical, 4)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+              Button(role: .destructive) {
+                Task { await deleteNotification(notification.id) }
+              } label: {
+                Label("Delete", systemImage: "trash")
+              }
+
+              if !notification.isRead {
+                Button {
+                  Task { await markNotificationRead(notification.id) }
+                } label: {
+                  Label("Read", systemImage: "checkmark")
+                }
+                .tint(.blue)
+              }
             }
           }
           .refreshable {
-            await loadAlerts()
+            await loadNotifications()
           }
         }
       }
       .navigationTitle("Alerts")
-      .toolbar {
-        #if os(macOS)
-        ToolbarItem(placement: .automatic) {
-          if showingCachedData {
-            Label("Cached", systemImage: "clock.arrow.circlepath")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-        ToolbarItem(placement: .automatic) {
-          Picker("Status", selection: $selectedStatus) {
-            Text("Open").tag(GatewayAlertStatus.open)
-            Text("Ack'd").tag(GatewayAlertStatus.acknowledged)
-            Text("Resolved").tag(GatewayAlertStatus.resolved)
-          }
-          .pickerStyle(.segmented)
-          .frame(minWidth: 180)
-        }
-        #else
-        ToolbarItem(placement: .topBarLeading) {
-          if showingCachedData {
-            Label("Cached", systemImage: "clock.arrow.circlepath")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-          Picker("Status", selection: $selectedStatus) {
-            Text("Open").tag(GatewayAlertStatus.open)
-            Text("Ack'd").tag(GatewayAlertStatus.acknowledged)
-            Text("Resolved").tag(GatewayAlertStatus.resolved)
-          }
-          .pickerStyle(.segmented)
-          .frame(minWidth: 180)
-        }
-        #endif
-      }
-      .navigationDestination(for: String.self) { alertID in
-        AlertDetailView(model: model, alertID: alertID)
-      }
     }
     .task {
-      await loadAlerts()
-    }
-    .onChange(of: selectedStatus) { _, _ in
-      Task { await loadAlerts() }
-    }
-    .onChange(of: model.pendingAlertID) { _, alertID in
-      if let alertID {
-        navigationPath.append(alertID)
-        model.pendingAlertID = nil
-      }
+      await loadNotifications()
     }
   }
 
-  private func loadAlerts() async {
+  private func loadNotifications() async {
     guard let baseURL = model.gatewayBaseURL else {
       errorMessage = GatewayChatError.missingConfiguration.localizedDescription
       return
@@ -520,26 +553,60 @@ struct AlertInboxView: View {
     defer { isLoading = false }
 
     do {
-      let fetched = try await model.chatClient.fetchAlerts(
+      notifications = try await model.chatClient.fetchNotifications(
         baseURL: baseURL,
         token: model.gatewayToken,
-        status: selectedStatus,
-        limit: 50,
-        before: nil
+        unreadOnly: false,
+        limit: 100
       )
-      alerts = fetched
-      model.alertCache.save(alerts: fetched, forStatus: selectedStatus)
-      showingCachedData = false
       errorMessage = nil
     } catch {
-      // Fall back to the local cache when the network is unavailable.
-      if let cached = model.alertCache.load(forStatus: selectedStatus) {
-        alerts = cached.alerts
-        showingCachedData = true
-        errorMessage = nil
-      } else {
-        errorMessage = error.localizedDescription
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func markNotificationRead(_ notificationID: String) async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+
+    do {
+      try await model.chatClient.markNotificationRead(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        notificationID: notificationID
+      )
+      notifications = notifications.map { notification in
+        guard notification.id == notificationID else { return notification }
+        return GatewayNotificationSummary(
+          id: notification.id,
+          userID: notification.userID,
+          kind: notification.kind,
+          title: notification.title,
+          body: notification.body,
+          threadID: notification.threadID,
+          sourceRunID: notification.sourceRunID,
+          payload: notification.payload,
+          readAt: ISO8601DateFormatter().string(from: Date()),
+          dismissedAt: notification.dismissedAt,
+          createdAt: notification.createdAt
+        )
       }
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func deleteNotification(_ notificationID: String) async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+
+    do {
+      try await model.chatClient.deleteNotification(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        notificationID: notificationID
+      )
+      notifications.removeAll { $0.id == notificationID }
+    } catch {
+      errorMessage = error.localizedDescription
     }
   }
 }
@@ -1167,6 +1234,7 @@ struct ChatView: View {
   @State private var isSending = false
   @State private var errorMessage: String?
   @State private var streamingTask: Task<Void, Never>?
+  @State private var didRunInitialLoad = false
 
   // Thread browsing (cross-device chat sync) state.
   @State private var threads: [GatewayThreadSummary] = []
@@ -1174,6 +1242,7 @@ struct ChatView: View {
   @State private var isLoadingThreadMessages = false
   @State private var showingThreadList = false
   @State private var threadErrorMessage: String?
+  @State private var resumableThreadID: String?
 
   /// Per-thread auto-speak preference, keyed by thread id (empty string for
   /// the "new chat" pre-thread state).  Persisted in UserDefaults so the
@@ -1182,9 +1251,18 @@ struct ChatView: View {
 
   private static let autoSpeakDefaultsKey = "gateway.tts.autoSpeakByThread"
   private static let activeThreadIDDefaultsKey = "gateway.activeThreadID"
-
+  private static let cachedAgentsDefaultsKey = "gateway.cachedAgents"
+  private static let speechInputLaunchArgument = "-GatewayAppEnableSpeechInput"
   private var autoSpeakKey: String { threadID ?? "" }
   private var autoSpeakEnabled: Bool { autoSpeakByThread[autoSpeakKey] ?? false }
+  private var speechInputEnabled: Bool {
+    ProcessInfo.processInfo.arguments.contains(Self.speechInputLaunchArgument)
+  }
+
+  init(model: GatewayAppViewModel) {
+    self.model = model
+    _agents = State(initialValue: Self.loadCachedAgents())
+  }
 
   /// Binding for the auto-speak Toggle: reads/writes the per-thread entry in
   /// `autoSpeakByThread` and persists the whole dict so the preference
@@ -1219,32 +1297,30 @@ struct ChatView: View {
   var body: some View {
     NavigationStack {
       VStack(spacing: 12) {
-        // Agent picker area — always renders so the rest of the UI is interactive
-        // immediately, even while the agent list is still loading or failed to load.
-        if isLoadingAgents && agents.isEmpty {
-          HStack(spacing: 8) {
-            ProgressView()
-            Text("Loading agents…")
-              .foregroundStyle(.secondary)
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-        } else if agents.isEmpty, let agentsError = errorMessage, !isSending {
-          HStack(spacing: 8) {
+        if isLoadingAgents {
+          ProgressView("Loading agents…")
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        if agents.isEmpty, let agentsError = errorMessage, !isSending {
+          HStack(alignment: .top, spacing: 8) {
             Image(systemName: "wifi.slash")
               .foregroundStyle(.secondary)
-            Text(agentsError)
+            VStack(alignment: .leading, spacing: 4) {
+              Text(agentsError)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+              Button("Retry") {
+                errorMessage = nil
+                Task { await loadAgents() }
+              }
               .font(.footnote)
-              .foregroundStyle(.secondary)
-              .lineLimit(2)
-            Spacer()
-            Button("Retry") {
-              errorMessage = nil
-              Task { await loadAgents() }
             }
-            .buttonStyle(.bordered)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
-        } else if !agents.isEmpty {
+        }
+
+        if !agents.isEmpty {
           Picker("Agent", selection: $selectedAgentID) {
             if let defaultName = agents.first?.name {
               Text("Auto-select (\(defaultName))").tag(Optional<String>.none)
@@ -1257,93 +1333,110 @@ struct ChatView: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        Group {
-          if let threadID {
-            Text("Thread: \(threadID)")
-              .font(.caption)
+        if let threadID {
+          Text("Thread: \(threadID)")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let resumableThreadID {
+          HStack(spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
               .foregroundStyle(.secondary)
-              .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Resume previous chat") {
+              Task {
+                await switchToThread(resumableThreadID)
+                self.resumableThreadID = nil
+              }
+            }
+            .font(.footnote)
+            Spacer()
           }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
 
-          ScrollView {
-            LazyVStack(alignment: .leading, spacing: 8) {
-              if messages.isEmpty {
-                Text("Send a prompt to start chatting.")
-                  .foregroundStyle(.secondary)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              } else {
-                ForEach(messages) { message in
-                  ChatMessageBubble(
-                    message: message,
-                    onSpeak: model.ttsEnabled ? { text in
-                      Task { await model.speak(text: text) }
-                    } : nil
-                  )
-                }
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 8) {
+            if messages.isEmpty {
+              Text("Send a prompt to start chatting.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+              ForEach(messages) { message in
+                ChatMessageBubble(
+                  message: message,
+                  onSpeak: model.ttsEnabled ? { text in
+                    Task { await model.speak(text: text) }
+                  } : nil
+                )
               }
             }
           }
-          .scrollDismissesKeyboard(.interactively)
-          .contentShape(Rectangle())
-          .onTapGesture {
-            isPromptFocused = false
-          }
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .contentShape(Rectangle())
+        .onTapGesture {
+          isPromptFocused = false
+        }
 
-          if let errorMessage {
-            Text(errorMessage)
-              .font(.footnote)
-              .foregroundStyle(.red)
-              .frame(maxWidth: .infinity, alignment: .leading)
-          }
+        if let errorMessage {
+          Text(errorMessage)
+            .font(.footnote)
+            .foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
 
-          HStack(alignment: .bottom, spacing: 8) {
-            TextField("Type a prompt…", text: $prompt, axis: .vertical)
-              .lineLimit(1...4)
-              .gatewayTextInputAutocapitalizationSentences()
-              .autocorrectionDisabled(false)
-              .focused($isPromptFocused)
+        HStack(alignment: .bottom, spacing: 8) {
+          TextField("Type a prompt…", text: $prompt, axis: .vertical)
+            .lineLimit(1...4)
+            .gatewayTextInputAutocapitalizationSentences()
+            .autocorrectionDisabled(false)
+            .focused($isPromptFocused)
 
-            #if canImport(Speech)
-            Button {
-              Task {
-                if speechController.isRecording {
-                  speechController.stopRecording()
-                } else {
-                  await speechController.requestPermissions()
-                  guard speechController.recognitionState != .permissionDenied,
-                        speechController.recognitionState != .unavailable
-                  else { return }
-                  do {
-                    try speechController.startRecording()
-                  } catch {
-                    errorMessage = error.localizedDescription
-                  }
+          #if canImport(Speech)
+          if speechInputEnabled {
+          Button {
+            Task {
+              if speechController.isRecording {
+                speechController.stopRecording()
+              } else {
+                await speechController.requestPermissions()
+                guard speechController.recognitionState != .permissionDenied,
+                      speechController.recognitionState != .unavailable
+                else { return }
+                do {
+                  try speechController.startRecording()
+                } catch {
+                  errorMessage = error.localizedDescription
                 }
+              }
+            }
+          } label: {
+            Image(systemName: speechController.isRecording ? "stop.circle.fill" : "mic.circle")
+              .imageScale(.large)
+          }
+          .disabled(isSending)
+          .foregroundStyle(speechController.isRecording ? Color.red : Color.secondary)
+          }
+          #endif
+
+          if isSending {
+            Button("Cancel") {
+              streamingTask?.cancel()
+            }
+          } else {
+            Button {
+              streamingTask = Task {
+                await sendPrompt()
               }
             } label: {
-              Image(systemName: speechController.isRecording ? "stop.circle.fill" : "mic.circle")
-                .imageScale(.large)
+              Text("Send")
             }
-            .disabled(isSending)
-            .foregroundStyle(speechController.isRecording ? Color.red : Color.secondary)
-            #endif
-
-            if isSending {
-              Button("Cancel") {
-                streamingTask?.cancel()
-              }
-            } else {
-              Button {
-                streamingTask = Task {
-                  await sendPrompt()
-                }
-              } label: {
-                Text("Send")
-              }
-              .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+            .disabled(
+              prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+              (resolvedAgentID == nil && !isLoadingAgents)
+            )
           }
-        } // end Group (always-rendered chat body)
+        }
       }
       .padding()
       .contentShape(Rectangle())
@@ -1486,27 +1579,31 @@ struct ChatView: View {
       }
     }
     .task {
+      guard !didRunInitialLoad else { return }
+      didRunInitialLoad = true
+
+      // Remember the last active thread, but do not auto-load it on launch.
+      // Large synced histories make the app feel hung before the user can act.
+      if threadID == nil,
+         let stored = UserDefaults.standard.string(forKey: Self.activeThreadIDDefaultsKey),
+         !stored.isEmpty {
+        resumableThreadID = stored
+      }
       // Restore per-thread auto-speak preferences synchronously so the
       // toolbar Toggle reflects saved state before any network calls start.
       if let stored = UserDefaults.standard.dictionary(forKey: Self.autoSpeakDefaultsKey) as? [String: Bool] {
         autoSpeakByThread = stored
       }
 
-      // Fire the three startup network calls in parallel so a slow gateway
-      // on any one of them (thread history, voices) does not delay the
-      // others and leave the user staring at a spinner.
-      let restoredThreadID: String? = {
-        guard threadID == nil,
-              let stored = UserDefaults.standard.string(forKey: Self.activeThreadIDDefaultsKey),
-              !stored.isEmpty else { return nil }
-        return stored
-      }()
-
-      async let agentsTask: Void = loadAgents()
-      async let voicesTask: Void = model.loadVoices()
-      async let historyTask: Void = loadHistoryOnLaunch(restoredThreadID: restoredThreadID)
-
-      _ = await (agentsTask, voicesTask, historyTask)
+      if agents.isEmpty {
+        agents = Self.loadCachedAgents()
+      }
+      Task {
+        await loadAgents()
+      }
+      Task {
+        await model.loadVoices()
+      }
     }
     .onChange(of: threadID) { _, newValue in
       if let newValue, !newValue.isEmpty {
@@ -1529,6 +1626,7 @@ struct ChatView: View {
     do {
       let fetched = try await model.chatClient.fetchAgents(baseURL: baseURL, token: model.gatewayToken)
       agents = fetched
+      Self.saveCachedAgents(fetched)
       if let selectedAgentID, !agents.contains(where: { $0.id == selectedAgentID }) {
         self.selectedAgentID = nil
       }
@@ -1538,6 +1636,21 @@ struct ChatView: View {
     } catch {
       errorMessage = error.localizedDescription
     }
+  }
+
+  private static func loadCachedAgents() -> [GatewayAgentSummary] {
+    guard
+      let data = UserDefaults.standard.data(forKey: cachedAgentsDefaultsKey),
+      let decoded = try? JSONDecoder().decode([GatewayAgentSummary].self, from: data)
+    else {
+      return []
+    }
+    return decoded
+  }
+
+  private static func saveCachedAgents(_ agents: [GatewayAgentSummary]) {
+    guard let data = try? JSONEncoder().encode(agents) else { return }
+    UserDefaults.standard.set(data, forKey: cachedAgentsDefaultsKey)
   }
 
   private func sendPrompt() async {
@@ -1566,6 +1679,10 @@ struct ChatView: View {
     isSending = true
     errorMessage = nil
     defer { isSending = false }
+
+    if threadID == nil {
+      threadID = UUID().uuidString
+    }
 
     let conversation = messages.map { message in
       let role: String
@@ -1697,31 +1814,18 @@ struct ChatView: View {
         threadID: id
       )
       threadID = id
-      messages = history.map { msg in
+      let recentHistory = Array(history.suffix(100))
+      messages = recentHistory.map { msg in
         ChatMessageRow(
           role: msg.role == "assistant" ? .assistant : .user,
           content: msg.content
         )
       }
+      resumableThreadID = nil
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
     }
-  }
-
-  private func loadActiveThreadMessages() async {
-    guard let id = threadID else { return }
-    await switchToThread(id)
-  }
-
-  /// Helper used by the parallel startup task in `.task` so the work runs on
-  /// the main actor without triggering the "main actor-isolated property can
-  /// not be mutated from a nonisolated context" warning that async-let
-  /// closures otherwise produce.
-  private func loadHistoryOnLaunch(restoredThreadID: String?) async {
-    guard let restoredThreadID else { return }
-    threadID = restoredThreadID
-    await loadActiveThreadMessages()
   }
 
   private func deleteThread(_ id: String) async {
@@ -1979,6 +2083,14 @@ struct SettingsView: View {
                 Text(voice.name ?? voice.id).tag(Optional(voice.id))
               }
             }
+            Button("Refresh voices") {
+              Task { await model.loadVoices() }
+            }
+          }
+        } else {
+          Section("Voice") {
+            Text("TTS is currently unavailable or disabled on this gateway.")
+              .foregroundStyle(.secondary)
             Button("Refresh voices") {
               Task { await model.loadVoices() }
             }

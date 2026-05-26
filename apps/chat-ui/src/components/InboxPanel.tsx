@@ -79,7 +79,7 @@ export default function InboxPanel({
                 </p>
               </div>
               <span className="text-[10px] uppercase tracking-wide text-blue-300 border border-blue-500/40 px-2 py-1">
-                {item.kind.split('_').join(' ')}
+                {(item.kind || 'notification').split('_').join(' ')}
               </span>
             </div>
             <p className="mt-3 text-sm text-gray-300 whitespace-pre-wrap overflow-hidden max-h-32">

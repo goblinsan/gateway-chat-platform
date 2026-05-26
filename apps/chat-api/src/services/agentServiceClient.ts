@@ -556,6 +556,24 @@ export interface AgentServiceNotification {
   created_at: string
 }
 
+function normalizeNotificationRecord(input: Record<string, unknown>): AgentServiceNotification {
+  return {
+    id: String(input.id ?? input.ID ?? ''),
+    user_id: String(input.user_id ?? input.UserID ?? ''),
+    kind: String(input.kind ?? input.Kind ?? 'notification'),
+    title: String(input.title ?? input.Title ?? ''),
+    body: typeof (input.body ?? input.Body) === 'string' ? String(input.body ?? input.Body) : undefined,
+    thread_id: typeof (input.thread_id ?? input.ThreadID) === 'string' ? String(input.thread_id ?? input.ThreadID) : undefined,
+    source_run_id: typeof (input.source_run_id ?? input.SourceRunID) === 'string' ? String(input.source_run_id ?? input.SourceRunID) : undefined,
+    payload: typeof (input.payload ?? input.Payload) === 'object' && (input.payload ?? input.Payload) !== null
+      ? (input.payload ?? input.Payload) as Record<string, unknown>
+      : undefined,
+    read_at: typeof (input.read_at ?? input.ReadAt) === 'string' ? String(input.read_at ?? input.ReadAt) : undefined,
+    dismissed_at: typeof (input.dismissed_at ?? input.DismissedAt) === 'string' ? String(input.dismissed_at ?? input.DismissedAt) : undefined,
+    created_at: String(input.created_at ?? input.CreatedAt ?? ''),
+  }
+}
+
 export interface AgentServiceSchedule {
   id: string
   user_id: string
@@ -589,8 +607,8 @@ export async function fetchNotificationsFromAgentService(
     const text = await res.text().catch(() => '')
     throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
   }
-  const body = (await res.json()) as { notifications?: AgentServiceNotification[] }
-  return body.notifications ?? []
+  const body = (await res.json()) as { notifications?: Record<string, unknown>[] }
+  return (body.notifications ?? []).map(normalizeNotificationRecord)
 }
 
 export async function markNotificationReadInAgentService(userId: string, notificationId: string): Promise<void> {
