@@ -97,6 +97,7 @@ export default async function chatRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       const { agentId, messages, threadId, modelOverride } = req.body
+      const effectiveThreadId = threadId?.trim() || randomUUID()
 
       const prisma = getPrismaClient()
       const agent = await resolveAgent(agentId, req.userId, prisma)
@@ -198,7 +199,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             maxTokens: agent.maxTokens,
             modelParams: agent.endpointConfig?.modelParams,
             userId: req.userId,
-            threadId,
+            threadId: effectiveThreadId,
           })
           usedProvider = agentServiceResult.usedProvider
           responseMessage = agentServiceResult.message
@@ -229,6 +230,7 @@ export default async function chatRoutes(app: FastifyInstance) {
         agentId,
         usedProvider,
         model: responseModel,
+        threadId: effectiveThreadId,
         message: responseMessage,
         latencyMs,
         ...(responseUsage ? { usage: responseUsage } : {}),
@@ -236,7 +238,7 @@ export default async function chatRoutes(app: FastifyInstance) {
       }
 
       // Persist usage data asynchronously
-      if (threadId) {
+      if (effectiveThreadId) {
         const effectiveModel = responseModel ?? resolvedModel
         const estimatedCostUsd = responseUsage
           ? estimateCostUsd(
@@ -249,7 +251,7 @@ export default async function chatRoutes(app: FastifyInstance) {
           try {
             const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')
             await upsertConversation(prisma, {
-              id: threadId,
+              id: effectiveThreadId,
               userId: req.userId,
               agentId,
               title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
@@ -258,14 +260,14 @@ export default async function chatRoutes(app: FastifyInstance) {
             if (latestUserMessage) {
               await persistMessage(prisma, {
                 id: randomUUID(),
-                conversationId: threadId,
+                conversationId: effectiveThreadId,
                 role: 'user',
                 content: latestUserMessage.content,
               })
             }
             await persistMessage(prisma, {
               id: randomUUID(),
-              conversationId: threadId,
+              conversationId: effectiveThreadId,
               role: 'assistant',
               content: responseMessage.content,
               model: effectiveModel,
@@ -273,7 +275,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             })
             await persistUsageLog(prisma, {
               userId: req.userId,
-              conversationId: threadId,
+              conversationId: effectiveThreadId,
               agentId,
               provider: usedProvider,
               model: effectiveModel,
@@ -285,7 +287,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             })
             if (latestUserMessage) {
               await syncAgentConversationToNotes(agent, {
-                threadId,
+                threadId: effectiveThreadId,
                 source: 'chat',
                 userMessage: latestUserMessage.content,
                 assistantMessage: responseMessage.content,
@@ -312,6 +314,7 @@ export default async function chatRoutes(app: FastifyInstance) {
     },
     async (req, reply) => {
       const { agentId, messages, threadId, modelOverride } = req.body
+      const effectiveThreadId = threadId?.trim() || randomUUID()
 
       const prisma = getPrismaClient()
       const agent = await resolveAgent(agentId, req.userId, prisma)
@@ -430,7 +433,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             maxTokens: agent.maxTokens,
             modelParams: agent.endpointConfig?.modelParams,
             userId: req.userId,
-            threadId,
+            threadId: effectiveThreadId,
           }, (event) => {
             if (event.type === 'token') {
               accumulatedContent += event.token
@@ -482,6 +485,7 @@ export default async function chatRoutes(app: FastifyInstance) {
           agentId,
           model: effectiveModel,
           usedProvider,
+          threadId: effectiveThreadId,
           latencyMs,
           ...(usageData ? { usage: usageData } : {}),
           routingExplanation,
@@ -493,7 +497,7 @@ export default async function chatRoutes(app: FastifyInstance) {
         // Persist conversation data asynchronously (Issues #111, #112).
         // The gateway remains the owner of thread/message persistence, usage logs,
         // and notes sync regardless of whether execution was delegated to agent-service.
-        if (threadId && orchestratedStatus !== 'approval_required' && orchestratedStatus !== 'paused') {
+        if (effectiveThreadId && orchestratedStatus !== 'approval_required' && orchestratedStatus !== 'paused') {
           const estimatedCostUsd = usageData
             ? estimateCostUsd(effectiveModel, usageData.promptTokens, usageData.completionTokens)
             : 0
@@ -501,7 +505,7 @@ export default async function chatRoutes(app: FastifyInstance) {
             try {
               const latestUserMessage = [...messages].reverse().find((m) => m.role === 'user')
               await upsertConversation(prisma, {
-                id: threadId,
+                id: effectiveThreadId,
                 userId: req.userId,
                 agentId,
                 title: messages[0]?.content.slice(0, 60) ?? 'Conversation',
@@ -513,14 +517,14 @@ export default async function chatRoutes(app: FastifyInstance) {
               if (latestUserMessage) {
                 await persistMessage(prisma, {
                   id: randomUUID(),
-                  conversationId: threadId,
+                  conversationId: effectiveThreadId,
                   role: 'user',
                   content: latestUserMessage.content,
                 })
               }
               await persistMessage(prisma, {
                 id: randomUUID(),
-                conversationId: threadId,
+                conversationId: effectiveThreadId,
                 role: 'assistant',
                 content: accumulatedContent,
                 model: effectiveModel,
@@ -528,7 +532,7 @@ export default async function chatRoutes(app: FastifyInstance) {
               })
               await persistUsageLog(prisma, {
                 userId: req.userId,
-                conversationId: threadId,
+                conversationId: effectiveThreadId,
                 agentId,
                 provider: usedProvider,
                 model: effectiveModel,
@@ -540,7 +544,7 @@ export default async function chatRoutes(app: FastifyInstance) {
               })
               if (latestUserMessage) {
                 await syncAgentConversationToNotes(agent, {
-                  threadId,
+                  threadId: effectiveThreadId,
                   source: 'chat',
                   userMessage: latestUserMessage.content,
                   assistantMessage: accumulatedContent,

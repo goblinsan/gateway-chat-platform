@@ -600,11 +600,11 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
     expect((assistantCall![1] as { content: string }).content).toBe('Direct stream.')
   })
 
-  it('does not persist messages when threadId is absent', async () => {
+  it('mints and persists a thread when streaming request omits threadId', async () => {
     const app = Fastify()
     await app.register(chatRoutes, { prefix: '/api' })
 
-    await app.inject({
+    const res = await app.inject({
       method: 'POST',
       url: '/api/chat/stream',
       payload: {
@@ -615,8 +615,11 @@ describe('POST /api/chat/stream — execution-mode routing', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(mockPersistMessage).not.toHaveBeenCalled()
-    expect(mockPersistUsageLog).not.toHaveBeenCalled()
+    const events = parseSseEvents(res.payload)
+    const doneEvent = events.find((event) => event.type === 'done')
+    expect(doneEvent?.threadId).toBeTruthy()
+    expect(mockPersistMessage).toHaveBeenCalled()
+    expect(mockPersistUsageLog).toHaveBeenCalled()
   })
 
   it('calls syncAgentConversationToNotes after orchestrated streaming run when notes sync is configured', async () => {

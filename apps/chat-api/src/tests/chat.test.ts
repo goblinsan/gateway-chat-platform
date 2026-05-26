@@ -326,4 +326,27 @@ describe('POST /api/chat', () => {
     expect(mockPersistMessage).toHaveBeenCalled()
     expect(mockSyncAgentConversationToNotes).toHaveBeenCalled()
   })
+
+  it('returns a generated threadId for sync chat requests that omit one', async () => {
+    const app = Fastify()
+    await app.register(chatRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/chat',
+      payload: {
+        agentId: 'local-analyst',
+        messages: [{ role: 'user', content: 'Create a durable thread.' }],
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.payload) as { threadId?: string }
+    expect(body.threadId).toBeTruthy()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(mockUpsertConversation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: body.threadId }),
+    )
+  })
 })

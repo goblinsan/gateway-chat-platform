@@ -48,6 +48,7 @@ export interface AgentChatResponse {
   agentId: string
   usedProvider: string
   model?: string
+  threadId?: string
   message: {
     role: 'assistant'
     content: string
@@ -70,6 +71,7 @@ export interface AgentStreamDoneEvent {
   agentId: string
   model: string
   usedProvider: string
+  threadId?: string
   latencyMs: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
   routingExplanation?: RoutingExplanation
