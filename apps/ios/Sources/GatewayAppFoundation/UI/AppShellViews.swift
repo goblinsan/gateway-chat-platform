@@ -512,6 +512,19 @@ struct AlertInboxView: View {
                     .foregroundStyle(.secondary)
                 }
               }
+
+              if model.ttsEnabled, let speechText = notificationSpeechText(notification) {
+                HStack {
+                  Spacer()
+                  Button {
+                    Task { await model.speak(text: speechText) }
+                  } label: {
+                    Label("Read aloud", systemImage: "speaker.wave.2")
+                      .font(.caption)
+                  }
+                  .buttonStyle(.borderless)
+                }
+              }
             }
             .padding(.vertical, 4)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -530,6 +543,16 @@ struct AlertInboxView: View {
                 .tint(.blue)
               }
             }
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+              if let speechText = notificationSpeechText(notification) {
+                Button {
+                  Task { await model.speak(text: speechText) }
+                } label: {
+                  Label("Speak", systemImage: "speaker.wave.2")
+                }
+                .tint(.indigo)
+              }
+            }
           }
           .refreshable {
             await loadNotifications()
@@ -539,8 +562,26 @@ struct AlertInboxView: View {
       .navigationTitle("Alerts")
     }
     .task {
+      await model.loadVoices()
       await loadNotifications()
     }
+  }
+
+  private func notificationSpeechText(_ notification: GatewayNotificationSummary) -> String? {
+    let title = notification.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let body = notification.body?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let text: String
+    switch (title.isEmpty, body.isEmpty) {
+    case (false, false):
+      text = "\(title). \(body)"
+    case (false, true):
+      text = title
+    case (true, false):
+      text = body
+    case (true, true):
+      return nil
+    }
+    return text
   }
 
   private func loadNotifications() async {
