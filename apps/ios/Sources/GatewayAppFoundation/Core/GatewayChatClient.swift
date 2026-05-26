@@ -296,6 +296,30 @@ public struct GatewayNotificationSummary: Decodable, Equatable, Identifiable, Se
     self.createdAt = createdAt
   }
 
+  init?(raw input: [String: Any]) {
+    guard
+      let id = Self.stringValue(input["id"] ?? input["ID"]),
+      let userID = Self.stringValue(input["user_id"] ?? input["UserID"]),
+      let kind = Self.stringValue(input["kind"] ?? input["Kind"]),
+      let title = Self.stringValue(input["title"] ?? input["Title"]),
+      let createdAt = Self.stringValue(input["created_at"] ?? input["CreatedAt"])
+    else {
+      return nil
+    }
+
+    self.id = id
+    self.userID = userID
+    self.kind = kind
+    self.title = title
+    self.body = Self.stringValue(input["body"] ?? input["Body"])
+    self.threadID = Self.stringValue(input["thread_id"] ?? input["ThreadID"])
+    self.sourceRunID = Self.stringValue(input["source_run_id"] ?? input["SourceRunID"])
+    self.payload = Self.dictionaryStringValues(input["payload"] ?? input["Payload"])
+    self.readAt = Self.stringValue(input["read_at"] ?? input["ReadAt"])
+    self.dismissedAt = Self.stringValue(input["dismissed_at"] ?? input["DismissedAt"])
+    self.createdAt = createdAt
+  }
+
   private static func decodePayload(
     from container: KeyedDecodingContainer<CodingKeys>,
     forKey key: CodingKeys
@@ -309,6 +333,28 @@ public struct GatewayNotificationSummary: Decodable, Equatable, Identifiable, Se
       }
     }
     return rawPayload
+  }
+
+  private static func stringValue(_ raw: Any?) -> String? {
+    switch raw {
+    case let value as String:
+      return value
+    case let value as NSString:
+      return value as String
+    case let value as NSNumber:
+      return value.stringValue
+    case nil, is NSNull:
+      return nil
+    default:
+      return String(describing: raw!)
+    }
+  }
+
+  private static func dictionaryStringValues(_ raw: Any?) -> [String: String]? {
+    guard let dictionary = raw as? [String: Any] else { return nil }
+    return dictionary.reduce(into: [String: String]()) { partialResult, entry in
+      partialResult[entry.key] = stringValue(entry.value) ?? "null"
+    }
   }
 }
 
@@ -1113,8 +1159,7 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
       throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
     }
 
-    let decoded = try JSONDecoder().decode(NotificationsListResponse.self, from: data)
-    return decoded.notifications.filter { $0.dismissedAt == nil }
+    return try decodeNotificationsList(from: data).filter { $0.dismissedAt == nil }
   }
 
   public func markNotificationRead(
@@ -1447,6 +1492,21 @@ private struct ChatRequestPayload: Encodable {
   struct Message: Encodable {
     let role: String
     let content: String
+  }
+}
+
+private func decodeNotificationsList(from data: Data) throws -> [GatewayNotificationSummary] {
+  let jsonObject = try JSONSerialization.jsonObject(with: data)
+  guard
+    let body = jsonObject as? [String: Any],
+    let records = body["notifications"] as? [Any]
+  else {
+    throw GatewayChatError.invalidResponse
+  }
+
+  return records.compactMap { entry in
+    guard let record = entry as? [String: Any] else { return nil }
+    return GatewayNotificationSummary(raw: record)
   }
 }
 

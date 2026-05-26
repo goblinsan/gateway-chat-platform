@@ -498,6 +498,66 @@ final class GatewayChatClientTests: XCTestCase {
       XCTAssertEqual(error, .httpError(401, "Unauthorized"))
     }
   }
+
+  func testFetchNotificationsToleratesMixedPayloadShapes() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/notifications")
+      XCTAssertEqual(request.httpMethod, "GET")
+      let body = """
+      {
+        "notifications": [
+          {
+            "id": "n1",
+            "user_id": "jamescoghlan",
+            "kind": "scheduled_job.completed",
+            "title": "Scheduled work completed",
+            "body": "Drink water.",
+            "thread_id": "thread-1",
+            "source_run_id": "run-1",
+            "payload": {
+              "scheduled_job_id": "schedule-1",
+              "retry_count": 2,
+              "ok": true,
+              "details": { "source": "scheduler" }
+            },
+            "read_at": null,
+            "dismissed_at": null,
+            "created_at": "2026-05-26T18:18:47.0627Z"
+          },
+          {
+            "ID": "n2",
+            "UserID": "jamescoghlan",
+            "Kind": "scheduled_job.failed",
+            "Title": "Scheduled work failed",
+            "Body": "No healthy node.",
+            "ThreadID": "thread-2",
+            "SourceRunID": "run-2",
+            "Payload": { "status": "failed" },
+            "ReadAt": null,
+            "DismissedAt": null,
+            "CreatedAt": "2026-05-26T18:19:47.0627Z"
+          }
+        ]
+      }
+      """
+      return (200, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let notifications = try await client.fetchNotifications(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      unreadOnly: false,
+      limit: 25
+    )
+
+    XCTAssertEqual(notifications.count, 2)
+    XCTAssertEqual(notifications[0].id, "n1")
+    XCTAssertEqual(notifications[0].payload?["retry_count"], "2")
+    XCTAssertEqual(notifications[0].payload?["ok"], "true")
+    XCTAssertEqual(notifications[1].id, "n2")
+    XCTAssertEqual(notifications[1].kind, "scheduled_job.failed")
+  }
 }
 
 private final class URLProtocolStub: URLProtocol {
