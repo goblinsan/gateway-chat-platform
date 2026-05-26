@@ -12,6 +12,9 @@ services:
       HOST: "0.0.0.0"
     volumes:
       - ${CHAT_API_DATA_DIR:-./.data/chat-api}:/app/data
+    networks:
+      - default
+      - agent-service
     command: >
       sh -lc "mkdir -p /app/data
       && pnpm --filter @gateway/chat-api prisma:migrate
@@ -40,3 +43,15 @@ services:
     depends_on:
       - chat-ui
       - chat-api
+
+networks:
+  default:
+  # Externally-managed network created by the agent-service compose project on
+  # the gateway host. Attaching chat-api here lets it resolve `agent-service` by
+  # DNS via the host-internal docker network, so every blue/green deploy keeps
+  # working without a post-deploy `docker network connect` step.
+  # If the network name ever changes, override with:
+  #   AGENT_SERVICE_NETWORK=<real-network-name> docker compose up -d
+  agent-service:
+    external: true
+    name: ${AGENT_SERVICE_NETWORK:-agent-service_default}
