@@ -34,8 +34,10 @@ function secureCompare(left: string, right: string): boolean {
  * available as `req.userId`. Resolution order:
  *
  * 1. When CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD are set, require the
- *    `CF-Access-Jwt-Assertion` header and use the decoded JWT `sub` claim as
- *    the user identifier.
+ *    `CF-Access-Jwt-Assertion` header. If MOBILE_SHARED_USER_ID is configured,
+ *    reuse that stable identifier for browser requests so native and web
+ *    clients can share the same server-backed thread namespace in single-user
+ *    deployments; otherwise use the decoded JWT `sub` claim.
  * 2. Otherwise fall back to the `X-User-Id` request header (useful for local
  *    development and service-to-service calls).
  * 3. Otherwise fall back to the CHAT_DEFAULT_USER_ID environment variable.
@@ -48,8 +50,8 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
   const env = getEnv()
   const cfConfigured = Boolean(env.CF_ACCESS_TEAM_DOMAIN && env.CF_ACCESS_AUD)
   const mobileSharedToken = env.MOBILE_SHARED_TOKEN?.trim()
-  const mobileSharedUserId =
-    env.MOBILE_SHARED_USER_ID?.trim() || env.CHAT_DEFAULT_USER_ID
+  const mobileSharedUserId = env.MOBILE_SHARED_USER_ID?.trim()
+  const mobileFallbackUserId = mobileSharedUserId || env.CHAT_DEFAULT_USER_ID
 
   app.addHook('onRequest', async (req, reply) => {
     const cfToken =
@@ -59,6 +61,10 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
       try {
         const claims = decodeJwt(cfToken)
         const sub = typeof claims.sub === 'string' ? claims.sub.trim() : ''
+        if (mobileSharedUserId) {
+          req.userId = mobileSharedUserId
+          return
+        }
         if (sub) {
           req.userId = sub
           return
@@ -77,7 +83,7 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
       bearerToken &&
       secureCompare(bearerToken, mobileSharedToken)
     ) {
-      req.userId = mobileSharedUserId
+      req.userId = mobileFallbackUserId
       return
     }
 

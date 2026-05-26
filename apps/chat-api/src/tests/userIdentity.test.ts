@@ -98,4 +98,24 @@ describe('user identity plugin', () => {
     expect(res.statusCode).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ id: 'cf-user-123', userId: 'cf-user-123' })
   })
+
+  it('reuses the configured mobile user id for Cloudflare browser sessions when present', async () => {
+    mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
+    mockEnv.CF_ACCESS_AUD = 'audience'
+    mockEnv.MOBILE_SHARED_USER_ID = 'jamescoghlan'
+
+    const app = await buildApp()
+    const payload = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')
+    const claims = Buffer.from(JSON.stringify({ sub: 'cf-user-123' })).toString('base64url')
+    const token = `${payload}.${claims}.signature`
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/session/me',
+      headers: { 'cf-access-jwt-assertion': token },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ id: 'jamescoghlan', userId: 'jamescoghlan' })
+  })
 })
