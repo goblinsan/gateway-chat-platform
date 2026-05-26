@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { getPrismaClient } from '../services/db'
+import { registerDeviceTokenInAgentService } from '../services/agentServiceClient'
 
 const APNS_TOKEN_PATTERN = /^[A-Fa-f0-9]{32,512}$/
 const IOS_PLATFORM = 'ios'
@@ -104,6 +105,16 @@ export default async function sessionRoutes(app: FastifyInstance) {
     })
 
     req.log.info({ userId: req.userId, mobileDeviceId: device.id }, 'Registered APNs mobile device')
+    try {
+      await registerDeviceTokenInAgentService(req.userId, {
+        platform: IOS_PLATFORM,
+        token: normalizedToken,
+        app_version: appVersion ?? undefined,
+      })
+    } catch (err) {
+      req.log.error({ err, userId: req.userId }, 'Failed to mirror APNs device token into agent-service')
+      return reply.status(502).send({ error: 'Failed to register push token with agent-service' })
+    }
     return reply.send({
       id: device.id,
       platform: device.platform,

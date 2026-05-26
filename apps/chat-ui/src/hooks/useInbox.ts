@@ -14,6 +14,8 @@ interface NotificationRecord {
   body?: string
   thread_id?: string
   payload?: Record<string, unknown>
+  read_at?: string
+  dismissed_at?: string
   created_at: string
 }
 
@@ -24,7 +26,7 @@ async function fetchInbox(scope: ChatInboxScope): Promise<InboxListResponse> {
     throw new Error(`Inbox request failed (${response.status})`)
   }
   const payload = await response.json() as { notifications?: NotificationRecord[] }
-  const notifications = payload.notifications ?? []
+  const notifications = (payload.notifications ?? []).filter((notification) => !notification.dismissed_at)
   const items: InboxItem[] = notifications.map((notification) => {
     const metadata = notification.payload ?? {}
     const agentFromPayload = typeof metadata.agent_id === 'string' ? metadata.agent_id : undefined
@@ -41,7 +43,7 @@ async function fetchInbox(scope: ChatInboxScope): Promise<InboxListResponse> {
       threadTitle: notification.title,
       title: notification.title,
       metadata,
-      read: false,
+      read: Boolean(notification.read_at),
     }
   })
   return {

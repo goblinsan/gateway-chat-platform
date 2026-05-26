@@ -13,6 +13,7 @@ vi.mock('../config/env', () => ({
 }))
 
 const mockUpsert = vi.fn()
+const mockRegisterDeviceToken = vi.fn()
 
 vi.mock('../services/db', () => ({
   getPrismaClient: () => ({
@@ -20,6 +21,10 @@ vi.mock('../services/db', () => ({
       upsert: (...args: unknown[]) => mockUpsert(...args),
     },
   }),
+}))
+
+vi.mock('../services/agentServiceClient', () => ({
+  registerDeviceTokenInAgentService: (...args: unknown[]) => mockRegisterDeviceToken(...args),
 }))
 
 import userIdentityPlugin from '../plugins/userIdentity'
@@ -50,6 +55,7 @@ describe('POST /api/session/mobile-devices/apns', () => {
       updatedAt: new Date('2026-05-13T00:00:00.000Z'),
       lastSeenAt: new Date('2026-05-13T00:00:00.000Z'),
     })
+    mockRegisterDeviceToken.mockResolvedValue(undefined)
   })
 
   it('hashes and stores APNs token for the authenticated user', async () => {
@@ -83,6 +89,11 @@ describe('POST /api/session/mobile-devices/apns', () => {
         deviceName: 'Alice iPhone',
       }),
     }))
+    expect(mockRegisterDeviceToken).toHaveBeenCalledWith('alice', {
+      platform: 'ios',
+      token: NORMALIZED_TOKEN,
+      app_version: undefined,
+    })
     expect(res.body).not.toContain(NORMALIZED_TOKEN)
     expect(res.body).not.toContain(expectedHash)
   })
@@ -130,6 +141,11 @@ describe('POST /api/session/mobile-devices/apns', () => {
       create: expect.objectContaining({ appVersion: '1.2.3' }),
       update: expect.objectContaining({ appVersion: '1.2.3' }),
     }))
+    expect(mockRegisterDeviceToken).toHaveBeenCalledWith('alice', {
+      platform: 'ios',
+      token: NORMALIZED_TOKEN,
+      app_version: '1.2.3',
+    })
   })
 
   it('returns notificationMinSeverity in the response', async () => {
@@ -157,5 +173,20 @@ describe('POST /api/session/mobile-devices/apns', () => {
 
     expect(res.statusCode).toBe(400)
     expect(mockUpsert).not.toHaveBeenCalled()
+  })
+
+  it('returns 502 when agent-service device registration fails', async () => {
+    mockRegisterDeviceToken.mockRejectedValueOnce(new Error('upstream unavailable'))
+
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/session/mobile-devices/apns',
+      headers: { 'x-user-id': 'alice' },
+      payload: { apnsToken: VALID_TOKEN },
+    })
+
+    expect(res.statusCode).toBe(502)
+    expect(JSON.parse(res.body)).toEqual({ error: 'Failed to register push token with agent-service' })
   })
 })
