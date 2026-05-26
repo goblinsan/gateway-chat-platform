@@ -541,3 +541,171 @@ export async function deleteThreadInAgentService(
     throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
   }
 }
+
+export interface AgentServiceNotification {
+  id: string
+  user_id: string
+  kind: string
+  title: string
+  body?: string
+  thread_id?: string
+  source_run_id?: string
+  payload?: Record<string, unknown>
+  read_at?: string
+  dismissed_at?: string
+  created_at: string
+}
+
+export interface AgentServiceSchedule {
+  id: string
+  user_id: string
+  kind: string
+  prompt: string
+  thread_id?: string
+  agent_id?: string
+  payload?: Record<string, unknown>
+  run_at: string
+  recurrence?: string
+  status: string
+  last_run_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export async function fetchNotificationsFromAgentService(
+  userId: string,
+  unreadOnly = true,
+  limit?: number,
+): Promise<AgentServiceNotification[]> {
+  const base = requireAgentServiceUrl()
+  const url = new URL(`${base}/internal/notifications`)
+  url.searchParams.set('unread_only', unreadOnly ? 'true' : 'false')
+  if (limit && limit > 0) url.searchParams.set('limit', String(limit))
+  const res = await fetchWithTimeout(url.toString(), {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { notifications?: AgentServiceNotification[] }
+  return body.notifications ?? []
+}
+
+export async function markNotificationReadInAgentService(userId: string, notificationId: string): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/notifications/${encodeURIComponent(notificationId)}/read`, {
+    method: 'POST',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
+
+export async function markAllNotificationsReadInAgentService(userId: string): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/notifications/read-all`, {
+    method: 'POST',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
+
+export async function deleteNotificationInAgentService(userId: string, notificationId: string): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/notifications/${encodeURIComponent(notificationId)}`, {
+    method: 'DELETE',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
+
+export async function createScheduleInAgentService(
+  userId: string,
+  input: {
+    kind?: string
+    prompt: string
+    run_at: string
+    recurrence?: string
+    thread_id?: string
+    agent_id?: string
+    payload?: Record<string, unknown>
+  },
+): Promise<AgentServiceSchedule> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/schedules`, {
+    method: 'POST',
+    headers: buildUserHeaders(userId),
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  return await res.json() as AgentServiceSchedule
+}
+
+export async function listSchedulesFromAgentService(userId: string, limit?: number): Promise<AgentServiceSchedule[]> {
+  const base = requireAgentServiceUrl()
+  const url = new URL(`${base}/internal/schedules`)
+  if (limit && limit > 0) url.searchParams.set('limit', String(limit))
+  const res = await fetchWithTimeout(url.toString(), {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { schedules?: AgentServiceSchedule[] }
+  return body.schedules ?? []
+}
+
+export async function deleteScheduleInAgentService(userId: string, scheduleId: string): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/schedules/${encodeURIComponent(scheduleId)}`, {
+    method: 'DELETE',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
+
+export async function registerDeviceTokenInAgentService(
+  userId: string,
+  input: { platform: string; token: string; app_version?: string },
+): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/device-tokens`, {
+    method: 'POST',
+    headers: buildUserHeaders(userId),
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
+
+export async function unregisterDeviceTokenInAgentService(userId: string, token: string): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/device-tokens/${encodeURIComponent(token)}`, {
+    method: 'DELETE',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
