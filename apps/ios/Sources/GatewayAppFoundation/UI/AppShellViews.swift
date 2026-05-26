@@ -1,5 +1,8 @@
 #if canImport(SwiftUI)
 import SwiftUI
+#if canImport(UniformTypeIdentifiers)
+import UniformTypeIdentifiers
+#endif
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -1274,8 +1277,10 @@ struct ChatView: View {
   @State private var isLoadingAgents = false
   @State private var isSending = false
   @State private var errorMessage: String?
+  @State private var importStatusMessage: String?
   @State private var streamingTask: Task<Void, Never>?
   @State private var didRunInitialLoad = false
+  @State private var showingPlanImporter = false
 
   // Thread browsing (cross-device chat sync) state.
   @State private var threads: [GatewayThreadSummary] = []
@@ -1294,6 +1299,14 @@ struct ChatView: View {
   private static let activeThreadIDDefaultsKey = "gateway.activeThreadID"
   private static let cachedAgentsDefaultsKey = "gateway.cachedAgents"
   private static let speechInputLaunchArgument = "-GatewayAppEnableSpeechInput"
+  #if canImport(UniformTypeIdentifiers)
+  private static let planImportTypes: [UTType] = [
+    .plainText,
+    .text,
+    UTType(filenameExtension: "md") ?? .plainText,
+    UTType(filenameExtension: "markdown") ?? .plainText,
+  ]
+  #endif
   private var autoSpeakKey: String { threadID ?? "" }
   private var autoSpeakEnabled: Bool { autoSpeakByThread[autoSpeakKey] ?? false }
   private var speechInputEnabled: Bool {
@@ -1426,6 +1439,13 @@ struct ChatView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
 
+        if let importStatusMessage {
+          Text(importStatusMessage)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
         HStack(alignment: .bottom, spacing: 8) {
           TextField("Type a prompt…", text: $prompt, axis: .vertical)
             .lineLimit(1...4)
@@ -1524,6 +1544,14 @@ struct ChatView: View {
           .disabled(isSending)
         }
         ToolbarItem(placement: .automatic) {
+          Button {
+            showingPlanImporter = true
+          } label: {
+            Label("Import Plan", systemImage: "doc.badge.plus")
+          }
+          .disabled(isSending)
+        }
+        ToolbarItem(placement: .automatic) {
           Button("Reload Agents") {
             Task {
               await loadAgents()
@@ -1565,6 +1593,14 @@ struct ChatView: View {
             startNewChat()
           } label: {
             Label("New Chat", systemImage: "square.and.pencil")
+          }
+          .disabled(isSending)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            showingPlanImporter = true
+          } label: {
+            Label("Import Plan", systemImage: "doc.badge.plus")
           }
           .disabled(isSending)
         }
@@ -1618,6 +1654,15 @@ struct ChatView: View {
           }
         )
       }
+      #if canImport(UniformTypeIdentifiers)
+      .fileImporter(
+        isPresented: $showingPlanImporter,
+        allowedContentTypes: Self.planImportTypes,
+        allowsMultipleSelection: false
+      ) { result in
+        handlePlanImportSelection(result)
+      }
+      #endif
     }
     .task {
       guard !didRunInitialLoad else { return }
@@ -1719,6 +1764,7 @@ struct ChatView: View {
     isPromptFocused = false
     isSending = true
     errorMessage = nil
+    importStatusMessage = nil
     defer { isSending = false }
 
     if threadID == nil {
@@ -1842,6 +1888,63 @@ struct ChatView: View {
       threadErrorMessage = error.localizedDescription
     }
   }
+
+  #if canImport(UniformTypeIdentifiers)
+  private func handlePlanImportSelection(_ result: Result<[URL], Error>) {
+    switch result {
+    case let .success(urls):
+      guard let first = urls.first else {
+        errorMessage = "No document was selected."
+        importStatusMessage = nil
+        return
+      }
+      handlePlanImport(first)
+    case let .failure(error):
+      errorMessage = "Plan import canceled or failed: \(error.localizedDescription)"
+      importStatusMessage = nil
+    }
+  }
+
+  private func handlePlanImport(_ url: URL) {
+    do {
+      let importedText = try readImportedText(from: url)
+      let importedName = url.deletingPathExtension().lastPathComponent
+      prompt = Self.makePlanImportPrompt(documentName: importedName, text: importedText)
+      importStatusMessage = "Imported \(url.lastPathComponent). Review the prompt, then send it to ingest the plan."
+      errorMessage = nil
+      isPromptFocused = true
+    } catch {
+      errorMessage = "Unable to import plan document: \(error.localizedDescription)"
+      importStatusMessage = nil
+    }
+  }
+
+  private func readImportedText(from url: URL) throws -> String {
+    let startedAccess = url.startAccessingSecurityScopedResource()
+    defer {
+      if startedAccess {
+        url.stopAccessingSecurityScopedResource()
+      }
+    }
+    let text = try String(contentsOf: url, encoding: .utf8)
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      throw GatewayChatError.invalidResponse
+    }
+    return trimmed
+  }
+
+  private static func makePlanImportPrompt(documentName: String, text: String) -> String {
+    let safeName = documentName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let header: String
+    if safeName.isEmpty {
+      header = "Please ingest the following plan document into my durable plans using plan_ingest_text. Infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it. Then briefly summarize what you stored and any important gaps."
+    } else {
+      header = "Please ingest the following plan document into my durable plans using plan_ingest_text. Use \(safeName) as the source label, infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it, then briefly summarize what you stored and any important gaps."
+    }
+    return "\(header)\n\n<plan_document>\n\(text)\n</plan_document>"
+  }
+  #endif
 
   private func switchToThread(_ id: String) async {
     guard let baseURL = model.gatewayBaseURL else { return }
