@@ -613,7 +613,28 @@ function sendAgentServiceError(reply: FastifyReply, req: FastifyRequest, err: un
   if (err instanceof AgentServiceError && err.statusCode === 404) {
     return reply.status(404).send({ error: 'Plan not found' })
   }
+  if (err instanceof AgentServiceError && (err.statusCode === 400 || err.statusCode === 422)) {
+    const message = extractAgentServiceErrorMessage(err.message)
+    return reply.status(err.statusCode).send({ error: message })
+  }
   req.log.error({ err, op }, 'plan operation failed')
   const message = err instanceof Error ? err.message : String(err)
   return reply.status(502).send({ error: message })
+}
+
+function extractAgentServiceErrorMessage(message: string): string {
+  const trimmed = message.trim()
+  const jsonStart = trimmed.indexOf('{')
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(trimmed.slice(jsonStart)) as { error?: unknown }
+      if (typeof parsed.error === 'string' && parsed.error.trim().length > 0) {
+        return parsed.error.trim()
+      }
+    } catch {
+      // Fall back to the raw message if the body is not JSON.
+    }
+  }
+  const prefix = /^agent-service returned \d+:\s*/i
+  return trimmed.replace(prefix, '')
 }

@@ -31,6 +31,7 @@ vi.mock('../services/agentServiceClient', () => ({
 
 import userIdentityPlugin from '../plugins/userIdentity'
 import planRoutes from '../routes/plans'
+import { AgentServiceError } from '../services/agentServiceClient'
 
 async function buildApp() {
   const app = Fastify({ logger: false })
@@ -139,6 +140,24 @@ describe('POST /api/plans/import', () => {
       source: 'endurance-yaml',
     }))
     expect(response.body).toContain('"title":"Shipping plan tracker"')
+  })
+
+  it('surfaces structured import validation errors instead of masking them as 502', async () => {
+    mockImportPlan.mockRejectedValueOnce(new AgentServiceError('agent-service returned 400: {"error":"failed to parse structured plan document \\"endurance.yaml\\": yaml: line 5: mapping values are not allowed in this context. Fix the YAML/JSON formatting and try again. For YAML, quote values containing \':\' such as task titles"}', 400))
+    const app = await buildApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/plans/import',
+      payload: {
+        title: 'endurance.yaml',
+        source: 'endurance.yaml',
+        text: 'title: Endurance Plan\nmilestones:\n  - title: Week 1\n    tasks:\n      - title: Monday: 3 easy miles\n',
+      },
+    })
+
+    expect(response.statusCode).toBe(400)
+    expect(response.body).toContain('Fix the YAML/JSON formatting')
+    expect(response.body).not.toContain('agent-service returned 400:')
   })
 })
 
