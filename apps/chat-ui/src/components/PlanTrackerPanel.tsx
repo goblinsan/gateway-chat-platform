@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { PlanGoal, PlanStatus } from '@gateway/shared'
 
 interface PlanTrackerPanelProps {
@@ -35,6 +35,7 @@ const STATUS_CLASS: Record<PlanStatus, string> = {
 }
 
 const STATUS_VALUES: PlanStatus[] = ['on_track', 'at_risk', 'blocked', 'complete']
+type PlanViewMode = 'list' | 'timeline'
 
 function nextStatus(current: PlanStatus): PlanStatus {
   const index = STATUS_VALUES.indexOf(current)
@@ -69,6 +70,7 @@ export default function PlanTrackerPanel({
 }: PlanTrackerPanelProps) {
   if (!isOpen) return null
   const importInputRef = useRef<HTMLInputElement>(null)
+  const [viewMode, setViewMode] = useState<PlanViewMode>('list')
 
   const handleCreatePlan = async () => {
     const title = window.prompt('Goal title')
@@ -90,6 +92,150 @@ export default function PlanTrackerPanel({
       }
     }
   }
+
+  const renderMetadata = (plan: PlanGoal) => {
+    const hasMetadata =
+      plan.objectives.length > 0 ||
+      plan.principles.length > 0 ||
+      plan.baselineFacts.length > 0 ||
+      plan.trackedMetrics.length > 0 ||
+      plan.successCriteria.length > 0 ||
+      plan.cadence.length > 0 ||
+      plan.supportingSections.length > 0
+
+    if (!hasMetadata) return null
+
+    return (
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {plan.objectives.length > 0 && (
+          <section className="rounded border border-gray-700 bg-gray-900/40 p-2">
+            <p className="text-[11px] font-medium text-gray-300">Objectives</p>
+            <ul className="mt-1 space-y-1 text-[11px] text-gray-400">
+              {plan.objectives.map((item) => <li key={item}>• {item}</li>)}
+            </ul>
+          </section>
+        )}
+        {plan.principles.length > 0 && (
+          <section className="rounded border border-gray-700 bg-gray-900/40 p-2">
+            <p className="text-[11px] font-medium text-gray-300">Core Principles</p>
+            <ul className="mt-1 space-y-1 text-[11px] text-gray-400">
+              {plan.principles.map((item) => <li key={item}>• {item}</li>)}
+            </ul>
+          </section>
+        )}
+        {plan.baselineFacts.length > 0 && (
+          <section className="rounded border border-gray-700 bg-gray-900/40 p-2">
+            <p className="text-[11px] font-medium text-gray-300">Starting Metrics</p>
+            <div className="mt-1 space-y-1 text-[11px] text-gray-400">
+              {plan.baselineFacts.map((fact) => (
+                <p key={fact.label}>
+                  <span className="text-gray-500">{fact.label}:</span> {fact.value}
+                </p>
+              ))}
+            </div>
+          </section>
+        )}
+        {plan.trackedMetrics.length > 0 && (
+          <section className="rounded border border-gray-700 bg-gray-900/40 p-2">
+            <p className="text-[11px] font-medium text-gray-300">Metrics To Track</p>
+            <div className="mt-1 space-y-1 text-[11px] text-gray-400">
+              {plan.trackedMetrics.map((metric) => (
+                <p key={metric.name}>
+                  <span className="text-gray-300">{metric.name}</span>
+                  {metric.notes ? ` — ${metric.notes}` : ''}
+                  {metric.cadence ? ` [${metric.cadence}]` : ''}
+                </p>
+              ))}
+            </div>
+          </section>
+        )}
+        {plan.successCriteria.length > 0 && (
+          <section className="rounded border border-gray-700 bg-gray-900/40 p-2">
+            <p className="text-[11px] font-medium text-gray-300">Success Criteria</p>
+            <ul className="mt-1 space-y-1 text-[11px] text-gray-400">
+              {plan.successCriteria.map((item) => <li key={item}>• {item}</li>)}
+            </ul>
+          </section>
+        )}
+        {plan.cadence.length > 0 && (
+          <section className="rounded border border-gray-700 bg-gray-900/40 p-2">
+            <p className="text-[11px] font-medium text-gray-300">Weekly Structure</p>
+            <div className="mt-1 space-y-1 text-[11px] text-gray-400">
+              {plan.cadence.map((entry, idx) => (
+                <p key={`${entry.day}-${entry.activity}-${idx}`}>
+                  <span className="text-gray-500">{entry.day ?? entry.label ?? 'Session'}:</span> {entry.activity}
+                </p>
+              ))}
+            </div>
+          </section>
+        )}
+        {plan.supportingSections.length > 0 && (
+          <section className="rounded border border-gray-700 bg-gray-900/40 p-2 md:col-span-2">
+            <p className="text-[11px] font-medium text-gray-300">Supporting Material</p>
+            <div className="mt-2 space-y-2 text-[11px] text-gray-400">
+              {plan.supportingSections.map((section) => (
+                <div key={section.title} className="rounded border border-gray-800 bg-gray-950/60 p-2">
+                  <p className="text-gray-300">{section.title}</p>
+                  {section.summary && <p className="mt-1">{section.summary}</p>}
+                  {section.items.length > 0 && (
+                    <ul className="mt-1 space-y-1">
+                      {section.items.map((item, idx) => (
+                        <li key={`${section.title}-${item.label ?? item.uri ?? idx}`}>
+                          <span className="text-gray-500">{item.label ?? item.kind ?? 'Item'}:</span>{' '}
+                          {item.uri ? (
+                            <a className="text-blue-300 hover:text-blue-200 underline" href={item.uri} target="_blank" rel="noreferrer">
+                              {item.uri}
+                            </a>
+                          ) : (
+                            item.content ?? ''
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    )
+  }
+
+  const renderTimeline = (plan: PlanGoal) => (
+    <div className="mt-3 space-y-3">
+      {plan.milestones.map((milestone, idx) => (
+        <div key={milestone.id} className="relative pl-8">
+          <div className="absolute left-2 top-0 bottom-0 w-px bg-gray-700" />
+          <div className="absolute left-0 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-[10px] font-medium text-white">
+            {idx + 1}
+          </div>
+          <div className="rounded border border-gray-700 bg-gray-900/40 p-2">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-gray-200">{milestone.title}</p>
+                {milestone.notes && <p className="mt-1 text-[11px] text-gray-500">{milestone.notes}</p>}
+              </div>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${STATUS_CLASS[milestone.status]}`}>
+                {STATUS_LABEL[milestone.status]}
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] text-gray-500">{milestone.tasks.length} task(s)</p>
+            {milestone.tasks.length > 0 && (
+              <ul className="mt-2 space-y-1 text-[11px] text-gray-400">
+                {milestone.tasks.map((task) => (
+                  <li key={task.id}>
+                    <span className={`inline-block mr-2 rounded px-1.5 py-0.5 border ${STATUS_CLASS[task.status]}`}>{STATUS_LABEL[task.status]}</span>
+                    {task.title}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 
   return (
     <aside className="w-full md:w-[34rem] border-l border-gray-800 bg-gray-900/95 backdrop-blur-sm flex flex-col">
@@ -113,6 +259,22 @@ export default function PlanTrackerPanel({
           >
             New Goal
           </button>
+          <div className="flex overflow-hidden rounded border border-gray-700">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`px-2 py-1.5 text-xs transition-colors ${viewMode === 'list' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:text-white'}`}
+            >
+              List
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('timeline')}
+              className={`px-2 py-1.5 text-xs transition-colors ${viewMode === 'timeline' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:text-white'}`}
+            >
+              Timeline
+            </button>
+          </div>
           <input
             ref={importInputRef}
             type="file"
@@ -176,36 +338,7 @@ export default function PlanTrackerPanel({
                   )}
                 </div>
               )}
-              {(plan.objectives.length > 0 || plan.principles.length > 0 || plan.baselineFacts.length > 0 || plan.trackedMetrics.length > 0 || plan.successCriteria.length > 0 || plan.cadence.length > 0 || plan.supportingSections.length > 0) && (
-                <div className="mt-3 space-y-2 text-[11px] text-gray-400">
-                  {plan.objectives.length > 0 && <p><span className="text-gray-500">Objectives:</span> {plan.objectives.join(' · ')}</p>}
-                  {plan.principles.length > 0 && <p><span className="text-gray-500">Principles:</span> {plan.principles.join(' · ')}</p>}
-                  {plan.baselineFacts.length > 0 && (
-                    <p><span className="text-gray-500">Baseline:</span> {plan.baselineFacts.map((fact) => `${fact.label}: ${fact.value}`).join(' · ')}</p>
-                  )}
-                  {plan.trackedMetrics.length > 0 && (
-                    <p><span className="text-gray-500">Track:</span> {plan.trackedMetrics.map((metric) => metric.notes ? `${metric.name} (${metric.notes})` : metric.name).join(' · ')}</p>
-                  )}
-                  {plan.successCriteria.length > 0 && <p><span className="text-gray-500">Success:</span> {plan.successCriteria.join(' · ')}</p>}
-                  {plan.cadence.length > 0 && (
-                    <p><span className="text-gray-500">Cadence:</span> {plan.cadence.map((entry) => `${entry.day ?? entry.label ?? 'Session'}: ${entry.activity}`).join(' · ')}</p>
-                  )}
-                  {plan.supportingSections.length > 0 && (
-                    <div>
-                      <p className="text-gray-500">Supporting material:</p>
-                      <ul className="mt-1 space-y-1">
-                        {plan.supportingSections.map((section) => (
-                          <li key={section.title}>
-                            <span className="text-gray-300">{section.title}</span>
-                            {section.summary ? ` — ${section.summary}` : ''}
-                            {section.items.length > 0 ? ` (${section.items.map((item) => item.label || item.uri || item.content || 'item').join(', ')})` : ''}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
+              {renderMetadata(plan)}
             </div>
 
             <div className="mt-2 flex flex-wrap gap-2">
@@ -250,8 +383,9 @@ export default function PlanTrackerPanel({
               </button>
             </div>
 
-            <div className="mt-3 space-y-2">
-              {plan.milestones.map((milestone) => (
+            {viewMode === 'timeline' ? renderTimeline(plan) : (
+              <div className="mt-3 space-y-2">
+                {plan.milestones.map((milestone) => (
                 <div key={milestone.id} className="rounded border border-gray-700 bg-gray-900/40 p-2">
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-xs text-gray-200 font-medium">{milestone.title}</p>
@@ -314,8 +448,9 @@ export default function PlanTrackerPanel({
                     ))}
                   </ul>
                 </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
