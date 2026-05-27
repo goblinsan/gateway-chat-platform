@@ -7,6 +7,8 @@ public final class AppSessionController: @unchecked Sendable {
   private let identityChecker: GatewaySessionIdentityChecking?
 
   public private(set) var configuration: AppConfiguration
+  private var storedToken: String?
+  public private(set) var hasLoadedPersistedState = false
   public private(set) var connectionStatus: GatewayConnectionStatus = .unknown
   public private(set) var connectionIdentity: String?
 
@@ -20,15 +22,34 @@ public final class AppSessionController: @unchecked Sendable {
     self.tokenStore = tokenStore
     self.healthChecker = healthChecker
     self.identityChecker = identityChecker
-    self.configuration = configurationStore.load()
+    self.configuration = AppConfiguration(baseURLString: "", deviceName: "")
+    self.storedToken = nil
   }
 
   public var isSetupComplete: Bool {
-    configuration.isSetupComplete && tokenStore.readToken()?.isEmpty == false
+    configuration.isSetupComplete && storedToken?.isEmpty == false
   }
 
   public var apiToken: String? {
-    tokenStore.readToken()
+    storedToken
+  }
+
+  public func loadPersistedState() async {
+    guard !hasLoadedPersistedState else { return }
+
+    let configurationStore = self.configurationStore
+    let tokenStore = self.tokenStore
+    let snapshot = await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        let configuration = configurationStore.load()
+        let token = tokenStore.readToken()
+        continuation.resume(returning: (configuration, token))
+      }
+    }
+
+    configuration = snapshot.0
+    storedToken = snapshot.1
+    hasLoadedPersistedState = true
   }
 
   public func saveSetup(baseURLString: String, token: String, deviceName: String) throws {
@@ -57,6 +78,8 @@ public final class AppSessionController: @unchecked Sendable {
     configurationStore.save(configuration)
     _ = tokenStore.saveToken(trimmedToken)
     self.configuration = configuration
+    self.storedToken = trimmedToken
+    hasLoadedPersistedState = true
   }
 
   @discardableResult
@@ -69,7 +92,7 @@ public final class AppSessionController: @unchecked Sendable {
     connectionStatus = .checking
 
     do {
-      let token = tokenStore.readToken()
+      let token = storedToken
       if let identityChecker {
         if let identity = try await identityChecker.fetchConnectionIdentity(baseURL: baseURL, token: token) {
           connectionIdentity = identity
@@ -102,6 +125,8 @@ public final class AppSessionController: @unchecked Sendable {
     let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedToken.isEmpty else { return }
     _ = tokenStore.saveToken(trimmedToken)
+    storedToken = trimmedToken
+    hasLoadedPersistedState = true
     connectionStatus = .unknown
     connectionIdentity = nil
   }
@@ -118,6 +143,8 @@ public final class AppSessionController: @unchecked Sendable {
     configurationStore.clear()
     _ = tokenStore.clearToken()
     configuration = configurationStore.load()
+    storedToken = nil
+    hasLoadedPersistedState = true
     connectionStatus = .unknown
     connectionIdentity = nil
   }
