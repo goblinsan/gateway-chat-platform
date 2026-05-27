@@ -317,6 +317,7 @@ function ChatLayout() {
         error={plans.error}
         onRefresh={plans.refresh}
         onCreatePlan={plans.create}
+        onImportPlan={plans.importDocument}
         onPatchPlan={plans.patchPlan}
         onDeletePlan={plans.remove}
         onAddMilestone={plans.addMilestone}

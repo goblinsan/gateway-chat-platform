@@ -3,6 +3,7 @@ import type { PlanGoal, PlanStatus } from '@gateway/shared'
 import {
   listPlans,
   createPlan,
+  importPlanDocument,
   updatePlan,
   deletePlan,
   createPlanMilestone,
@@ -79,6 +80,16 @@ export function usePlans() {
     } catch (err) {
       setPlans((prev) => prev.filter((plan) => plan.id !== tempId))
       setError(err instanceof Error ? err.message : 'Failed to create plan')
+      await refresh()
+    }
+  }, [refresh])
+
+  const importDocument = useCallback(async (data: { title?: string; text: string; source?: string }) => {
+    try {
+      await importPlanDocument(data)
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to import plan')
       await refresh()
     }
   }, [refresh])
@@ -272,6 +283,7 @@ export function usePlans() {
     error,
     refresh,
     create,
+    importDocument,
     patchPlan,
     remove,
     addMilestone,

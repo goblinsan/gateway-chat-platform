@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type { PlanGoal, PlanStatus } from '@gateway/shared'
 
 interface PlanTrackerPanelProps {
@@ -8,6 +9,7 @@ interface PlanTrackerPanelProps {
   onRefresh: () => Promise<void>
   onClose: () => void
   onCreatePlan: (input: { title: string; vision?: string }) => Promise<void>
+  onImportPlan: (input: { title?: string; text: string; source?: string }) => Promise<void>
   onPatchPlan: (planId: string, patch: { title?: string; vision?: string; status?: PlanStatus }) => Promise<void>
   onDeletePlan: (planId: string) => Promise<void>
   onAddMilestone: (input: { planId: string; title: string }) => Promise<void>
@@ -55,6 +57,7 @@ export default function PlanTrackerPanel({
   onRefresh,
   onClose,
   onCreatePlan,
+  onImportPlan,
   onPatchPlan,
   onDeletePlan,
   onAddMilestone,
@@ -65,12 +68,27 @@ export default function PlanTrackerPanel({
   onDeleteTask,
 }: PlanTrackerPanelProps) {
   if (!isOpen) return null
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const handleCreatePlan = async () => {
     const title = window.prompt('Goal title')
     if (!title?.trim()) return
     const vision = window.prompt('Goal vision (optional)') ?? undefined
     await onCreatePlan({ title: title.trim(), vision: vision?.trim() || undefined })
+  }
+
+  const handleImportFile = async (file: File | null) => {
+    if (!file) return
+    try {
+      const text = (await file.text()).trim()
+      if (!text) return
+      const title = file.name.replace(/\.[^.]+$/, '').trim() || undefined
+      await onImportPlan({ title, text, source: title })
+    } finally {
+      if (importInputRef.current) {
+        importInputRef.current.value = ''
+      }
+    }
   }
 
   return (
@@ -94,6 +112,22 @@ export default function PlanTrackerPanel({
             className="px-3 py-1.5 text-xs border border-blue-700 text-blue-300 hover:border-blue-600 hover:text-blue-200 transition-colors"
           >
             New Goal
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".txt,.md,.markdown,.yaml,.yml,text/plain,text/markdown,application/yaml,text/yaml"
+            className="hidden"
+            onChange={(event) => {
+              void handleImportFile(event.target.files?.[0] ?? null)
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            className="px-3 py-1.5 text-xs border border-emerald-700 text-emerald-300 hover:border-emerald-600 hover:text-emerald-200 transition-colors"
+          >
+            Import Plan
           </button>
           <button
             type="button"
