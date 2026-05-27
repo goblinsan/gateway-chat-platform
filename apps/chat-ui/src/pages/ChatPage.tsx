@@ -83,6 +83,11 @@ export default function ChatPage({
     [threads, activeThreadId],
   )
 
+  const shouldRefreshPlansAfterSend = useCallback((promptText: string) => {
+    const normalized = promptText.toLowerCase()
+    return normalized.includes('plan_ingest_text') || normalized.includes('<plan_document>')
+  }, [])
+
   const activeThread = useMemo(
     () => threads.find((t) => t.id === activeThreadId),
     [threads, activeThreadId],
@@ -236,7 +241,9 @@ export default function ChatPage({
     }
 
     await doStream(activeAgentId, threadId, messagesToSend, effectiveModelOverride)
-    onPlansPossiblyChanged?.()
+    if (shouldRefreshPlansAfterSend(trimmed)) {
+      onPlansPossiblyChanged?.()
+    }
 
     // Refresh quota summary so the warning badge stays up to date (Issue #99)
     fetch('/api/usage/summary?hours=24')
@@ -255,6 +262,7 @@ export default function ChatPage({
     onAddMessage,
     doStream,
     onPlansPossiblyChanged,
+    shouldRefreshPlansAfterSend,
   ])
 
   const handleRegenerate = useCallback(async (): Promise<void> => {

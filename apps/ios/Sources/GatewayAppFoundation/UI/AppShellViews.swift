@@ -1747,6 +1747,11 @@ struct ChatView: View {
     UserDefaults.standard.set(data, forKey: cachedAgentsDefaultsKey)
   }
 
+  private func shouldRefreshPlansAfterSend(_ prompt: String) -> Bool {
+    let normalized = prompt.lowercased()
+    return normalized.contains("plan_ingest_text") || normalized.contains("<plan_document>")
+  }
+
   private func sendPrompt() async {
     let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedPrompt.isEmpty else {
@@ -1862,7 +1867,9 @@ struct ChatView: View {
     // Refresh the thread list in the background so the sidebar shows the
     // updated last-snippet and new thread (if this was the first send).
     Task { await loadThreads() }
-    NotificationCenter.default.post(name: .gatewayPlansPossiblyChanged, object: nil)
+    if shouldRefreshPlansAfterSend(trimmedPrompt) {
+      NotificationCenter.default.post(name: .gatewayPlansPossiblyChanged, object: nil)
+    }
 
     // Auto-speak the assistant reply if enabled for the current thread.
     if autoSpeakEnabled, model.ttsEnabled,
