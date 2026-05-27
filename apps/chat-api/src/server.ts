@@ -24,6 +24,7 @@ import threadsRoutes from './routes/threads'
 import notificationsRoutes from './routes/notifications'
 import schedulesRoutes from './routes/schedules'
 import devicesRoutes from './routes/devices'
+import planRoutes from './routes/plans'
 import cfAccessPlugin from './plugins/cfAccess'
 import userIdentityPlugin from './plugins/userIdentity'
 import { getPrismaClient } from './services/db'
@@ -116,6 +117,7 @@ async function bootstrap() {
   await app.register(notificationsRoutes, { prefix: '/api' })
   await app.register(schedulesRoutes, { prefix: '/api' })
   await app.register(devicesRoutes, { prefix: '/api' })
+  await app.register(planRoutes, { prefix: '/api' })
   await app.register(orchestrationRoutes, { prefix: '/api' })
   await app.register(mobileRoutes, { prefix: '/api' })
 

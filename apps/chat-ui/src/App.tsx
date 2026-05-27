@@ -19,6 +19,7 @@ import { useThreads } from './hooks/useThreads'
 import { useInbox, type ChatInboxScope } from './hooks/useInbox'
 import { usePersonas } from './hooks/usePersonas'
 import { useUsage } from './hooks/useUsage'
+import { usePlans } from './hooks/usePlans'
 
 function resolveInboxScope(): ChatInboxScope {
   try {
@@ -40,6 +41,8 @@ function ChatLayout() {
 
   const personas = usePersonas()
   const usage = useUsage()
+  const plans = usePlans()
+  const refreshPlans = plans.refresh
 
   // Merge operator agents and enabled user personas into a single list
   const agents = useMemo<AgentListItem[]>(() => {
@@ -117,6 +120,12 @@ function ChatLayout() {
   }, [agents, activeAgentId])
 
   const activeAgent = agents.find((a) => a.id === activeAgentId)
+
+  useEffect(() => {
+    if (showPlans) {
+      void refreshPlans()
+    }
+  }, [showPlans, refreshPlans])
 
   if (sessionUserId === null && sessionError === null) {
     return (
@@ -302,6 +311,19 @@ function ChatLayout() {
       />
       <PlanTrackerPanel
         isOpen={showPlans}
+        plans={plans.plans}
+        loading={plans.loading}
+        error={plans.error}
+        onRefresh={plans.refresh}
+        onCreatePlan={plans.create}
+        onPatchPlan={plans.patchPlan}
+        onDeletePlan={plans.remove}
+        onAddMilestone={plans.addMilestone}
+        onUpdateMilestoneStatus={plans.updateMilestoneStatus}
+        onDeleteMilestone={plans.removeMilestone}
+        onAddTask={plans.addTask}
+        onUpdateTaskStatus={plans.updateTaskStatus}
+        onDeleteTask={plans.removeTask}
         onClose={() => setShowPlans(false)}
       />
     </div>

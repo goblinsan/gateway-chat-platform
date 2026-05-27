@@ -482,6 +482,76 @@ public struct GatewayActionApproval: Decodable, Equatable, Identifiable, Sendabl
   }
 }
 
+// MARK: - Plan tracker models
+
+public enum GatewayPlanStatus: String, Codable, Equatable, CaseIterable, Sendable {
+  case onTrack = "on_track"
+  case atRisk = "at_risk"
+  case blocked
+  case complete
+
+  public var label: String {
+    switch self {
+    case .onTrack:
+      return "On track"
+    case .atRisk:
+      return "At risk"
+    case .blocked:
+      return "Blocked"
+    case .complete:
+      return "Complete"
+    }
+  }
+}
+
+public struct GatewayPlanMetric: Codable, Equatable, Sendable {
+  public let label: String
+  public let value: String
+}
+
+public struct GatewayPlanTask: Codable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let milestoneId: String
+  public let title: String
+  public let notes: String?
+  public let status: GatewayPlanStatus
+  public let progressPercent: Int
+  public let orderIndex: Int
+  public let createdAt: String
+  public let updatedAt: String
+}
+
+public struct GatewayPlanMilestone: Codable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let planId: String
+  public let title: String
+  public let notes: String?
+  public let status: GatewayPlanStatus
+  public let progressPercent: Int
+  public let orderIndex: Int
+  public let createdAt: String
+  public let updatedAt: String
+  public let tasks: [GatewayPlanTask]
+}
+
+public struct GatewayPlanGoal: Codable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let userId: String
+  public let title: String
+  public let vision: String?
+  public let status: GatewayPlanStatus
+  public let progressPercent: Int
+  public let category: String?
+  public let reviewCadence: String?
+  public let nextReviewAt: String?
+  public let tags: [String]
+  public let sourceSystems: [String]
+  public let metrics: [GatewayPlanMetric]
+  public let createdAt: String
+  public let updatedAt: String
+  public let milestones: [GatewayPlanMilestone]
+}
+
 /// A single event emitted by the `/api/chat/stream` SSE endpoint.
 public enum GatewayStreamEvent: Equatable, Sendable {
   /// A text token from the assistant response.
@@ -647,6 +717,19 @@ public protocol GatewayChatServing: Sendable {
     token: String?,
     approvalID: String
   ) async throws -> GatewayActionApproval
+
+  // MARK: - Plan tracker
+
+  func fetchPlans(baseURL: URL, token: String?) async throws -> [GatewayPlanGoal]
+  func createPlan(baseURL: URL, token: String?, title: String, vision: String?) async throws -> GatewayPlanGoal
+  func updatePlan(baseURL: URL, token: String?, planID: String, title: String?, status: GatewayPlanStatus?) async throws -> GatewayPlanGoal
+  func deletePlan(baseURL: URL, token: String?, planID: String) async throws
+  func createMilestone(baseURL: URL, token: String?, planID: String, title: String) async throws
+  func updateMilestone(baseURL: URL, token: String?, planID: String, milestoneID: String, status: GatewayPlanStatus) async throws
+  func deleteMilestone(baseURL: URL, token: String?, planID: String, milestoneID: String) async throws
+  func createTask(baseURL: URL, token: String?, planID: String, milestoneID: String, title: String) async throws
+  func updateTask(baseURL: URL, token: String?, planID: String, milestoneID: String, taskID: String, status: GatewayPlanStatus) async throws
+  func deleteTask(baseURL: URL, token: String?, planID: String, milestoneID: String, taskID: String) async throws
 
   // MARK: - Threads (chat sync across devices)
 
@@ -1295,6 +1378,214 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     return decoded.approval
   }
 
+  // MARK: - Plan tracker endpoints
+
+  public func fetchPlans(baseURL: URL, token: String?) async throws -> [GatewayPlanGoal] {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let decoded = try JSONDecoder().decode(PlansListResponse.self, from: data)
+    return decoded.plans
+  }
+
+  public func createPlan(
+    baseURL: URL,
+    token: String?,
+    title: String,
+    vision: String?
+  ) async throws -> GatewayPlanGoal {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    let payload: [String: String?] = [
+      "title": title,
+      "vision": vision,
+    ]
+    request.httpBody = try JSONEncoder().encode(payload)
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let decoded = try JSONDecoder().decode(PlanResponse.self, from: data)
+    return decoded.plan
+  }
+
+  public func updatePlan(
+    baseURL: URL,
+    token: String?,
+    planID: String,
+    title: String?,
+    status: GatewayPlanStatus?
+  ) async throws -> GatewayPlanGoal {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var payload: [String: String] = [:]
+    if let title { payload["title"] = title }
+    if let status { payload["status"] = status.rawValue }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "PUT"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(payload)
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let decoded = try JSONDecoder().decode(PlanResponse.self, from: data)
+    return decoded.plan
+  }
+
+  public func deletePlan(baseURL: URL, token: String?, planID: String) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "DELETE"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  public func createMilestone(baseURL: URL, token: String?, planID: String, title: String) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)/milestones") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(["title": title])
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  public func updateMilestone(
+    baseURL: URL,
+    token: String?,
+    planID: String,
+    milestoneID: String,
+    status: GatewayPlanStatus
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)/milestones/\(milestoneID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "PUT"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(["status": status.rawValue])
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  public func deleteMilestone(
+    baseURL: URL,
+    token: String?,
+    planID: String,
+    milestoneID: String
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)/milestones/\(milestoneID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "DELETE"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  public func createTask(
+    baseURL: URL,
+    token: String?,
+    planID: String,
+    milestoneID: String,
+    title: String
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)/milestones/\(milestoneID)/tasks") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(["title": title])
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  public func updateTask(
+    baseURL: URL,
+    token: String?,
+    planID: String,
+    milestoneID: String,
+    taskID: String,
+    status: GatewayPlanStatus
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)/milestones/\(milestoneID)/tasks/\(taskID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "PUT"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(["status": status.rawValue])
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
+  public func deleteTask(
+    baseURL: URL,
+    token: String?,
+    planID: String,
+    milestoneID: String,
+    taskID: String
+  ) async throws {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)/milestones/\(milestoneID)/tasks/\(taskID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "DELETE"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+  }
+
   // MARK: - Thread endpoints
 
   public func fetchThreads(
@@ -1563,4 +1854,12 @@ private struct ThreadsListResponse: Decodable {
 
 private struct ThreadDetailResponse: Decodable {
   let messages: [GatewayThreadMessage]
+}
+
+private struct PlansListResponse: Decodable {
+  let plans: [GatewayPlanGoal]
+}
+
+private struct PlanResponse: Decodable {
+  let plan: GatewayPlanGoal
 }

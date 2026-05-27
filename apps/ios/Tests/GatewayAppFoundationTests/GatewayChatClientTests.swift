@@ -43,6 +43,46 @@ final class GatewayChatClientTests: XCTestCase {
     XCTAssertEqual(agents, [.init(id: "agent-a", name: "Agent A", icon: "🤖", enabled: true)])
   }
 
+  func testFetchPlansDecodesNestedHierarchy() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/plans")
+      XCTAssertEqual(request.httpMethod, "GET")
+      let body = """
+      {"plans":[{"id":"plan-1","userId":"me","title":"Goal","status":"on_track","progressPercent":50,"tags":[],"sourceSystems":["chat-ui"],"metrics":[{"label":"Open tasks","value":"2"}],"createdAt":"2026-05-27T00:00:00.000Z","updatedAt":"2026-05-27T00:00:00.000Z","milestones":[{"id":"m-1","planId":"plan-1","title":"Milestone","status":"on_track","progressPercent":40,"orderIndex":0,"createdAt":"2026-05-27T00:00:00.000Z","updatedAt":"2026-05-27T00:00:00.000Z","tasks":[{"id":"t-1","milestoneId":"m-1","title":"Task","status":"blocked","progressPercent":10,"orderIndex":0,"createdAt":"2026-05-27T00:00:00.000Z","updatedAt":"2026-05-27T00:00:00.000Z"}]}]}]}
+      """
+      return (200, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let plans = try await client.fetchPlans(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123"
+    )
+
+    XCTAssertEqual(plans.count, 1)
+    XCTAssertEqual(plans[0].sourceSystems, ["chat-ui"])
+    XCTAssertEqual(plans[0].milestones.first?.tasks.first?.status, .blocked)
+  }
+
+  func testCreateMilestonePostsTitleToPlanEndpoint() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/plans/plan-1/milestones")
+      XCTAssertEqual(request.httpMethod, "POST")
+      let bodyData = try XCTUnwrap(request.stubbedBodyData())
+      let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: String])
+      XCTAssertEqual(payload["title"], "MVP")
+      return (201, Data("{\"milestone\":{\"id\":\"m-1\"}}".utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    try await client.createMilestone(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      planID: "plan-1",
+      title: "MVP"
+    )
+  }
+
   func testRegisterAPNsDeviceNormalizesTokenAndUsesSessionEndpoint() async throws {
     URLProtocolStub.handler = { request in
       XCTAssertEqual(request.url?.path, "/chat/api/session/mobile-devices/apns")
