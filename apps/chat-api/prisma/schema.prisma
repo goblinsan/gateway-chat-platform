@@ -103,6 +103,57 @@ model UserPersona {
   @@index([userId])
 }
 
+model Plan {
+  id             String          @id @default(uuid())
+  userId         String
+  title          String
+  vision         String?
+  status         String          @default("on_track")
+  progressPercent Int            @default(0)
+  category       String?
+  reviewCadence  String?
+  nextReviewAt   DateTime?
+  tagsJson       String?
+  sourceSystemsJson String?
+  metricsJson    String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  milestones     PlanMilestone[]
+
+  @@index([userId, updatedAt])
+}
+
+model PlanMilestone {
+  id              String      @id @default(uuid())
+  planId          String
+  plan            Plan        @relation(fields: [planId], references: [id], onDelete: Cascade)
+  title           String
+  notes           String?
+  status          String      @default("on_track")
+  progressPercent Int         @default(0)
+  orderIndex      Int         @default(0)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  tasks           PlanTask[]
+
+  @@index([planId, orderIndex])
+}
+
+model PlanTask {
+  id              String        @id @default(uuid())
+  milestoneId     String
+  milestone       PlanMilestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  title           String
+  notes           String?
+  status          String        @default("on_track")
+  progressPercent Int           @default(0)
+  orderIndex      Int           @default(0)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([milestoneId, orderIndex])
+}
+
 model MobileDevice {
   id                      String   @id @default(uuid())
   userId                  String

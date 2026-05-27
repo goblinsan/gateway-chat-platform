@@ -320,37 +320,45 @@ struct MainNavigationView: View {
         .tag(0)
 
       DeferredTabView(isActive: selectedTab == 1) {
+        LivePlanTrackerView(model: model)
+      }
+        .tabItem {
+          Label("Plans", systemImage: "target")
+        }
+        .tag(1)
+
+      DeferredTabView(isActive: selectedTab == 2) {
         AlertInboxView(model: model)
       }
         .tabItem {
           Label("Alerts", systemImage: "bell")
         }
-        .tag(1)
+        .tag(2)
 
-      DeferredTabView(isActive: selectedTab == 2) {
+      DeferredTabView(isActive: selectedTab == 3) {
         ApprovalInboxView(model: model)
       }
         .tabItem {
           Label("Approvals", systemImage: "checkmark.seal")
         }
-        .tag(2)
+        .tag(3)
 
-      DeferredTabView(isActive: selectedTab == 3) {
+      DeferredTabView(isActive: selectedTab == 4) {
         SettingsView(model: model)
       }
         .tabItem {
           Label("Settings", systemImage: "gear")
         }
-        .tag(3)
+        .tag(4)
     }
     .onChange(of: model.pendingAlertID) { _, alertID in
       if alertID != nil {
-        selectedTab = 1
+        selectedTab = 2
       }
     }
     .onChange(of: model.pendingApprovalID) { _, approvalID in
       if approvalID != nil {
-        selectedTab = 2
+        selectedTab = 3
       }
     }
   }

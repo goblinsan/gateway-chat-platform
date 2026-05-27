@@ -13,11 +13,13 @@ import WorkflowPanel from './components/WorkflowPanel'
 import InboxPanel from './components/InboxPanel'
 import PersonasPanel from './components/PersonasPanel'
 import UsagePanel from './components/UsagePanel'
+import PlanTrackerPanel from './components/PlanTrackerPanel'
 import { personaToAgentListItem } from './utils/persona'
 import { useThreads } from './hooks/useThreads'
 import { useInbox, type ChatInboxScope } from './hooks/useInbox'
 import { usePersonas } from './hooks/usePersonas'
 import { useUsage } from './hooks/useUsage'
+import { usePlans } from './hooks/usePlans'
 
 function resolveInboxScope(): ChatInboxScope {
   try {
@@ -39,6 +41,8 @@ function ChatLayout() {
 
   const personas = usePersonas()
   const usage = useUsage()
+  const plans = usePlans()
+  const refreshPlans = plans.refresh
 
   // Merge operator agents and enabled user personas into a single list
   const agents = useMemo<AgentListItem[]>(() => {
@@ -58,6 +62,7 @@ function ChatLayout() {
   const [showInbox, setShowInbox] = useState(false)
   const [showPersonas, setShowPersonas] = useState(false)
   const [showUsage, setShowUsage] = useState(false)
+  const [showPlans, setShowPlans] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sessionUserId, setSessionUserId] = useState<string | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
@@ -115,6 +120,12 @@ function ChatLayout() {
   }, [agents, activeAgentId])
 
   const activeAgent = agents.find((a) => a.id === activeAgentId)
+
+  useEffect(() => {
+    if (showPlans) {
+      void refreshPlans()
+    }
+  }, [showPlans, refreshPlans])
 
   if (sessionUserId === null && sessionError === null) {
     return (
@@ -194,6 +205,7 @@ function ChatLayout() {
         onWorkflows={() => setShowWorkflows((v) => !v)}
         unreadCount={inbox.unreadCount}
         onInbox={() => setShowInbox((value) => !value)}
+        onPlans={() => { setShowPlans((v) => !v); setSidebarOpen(false) }}
         onPersonas={() => { setShowPersonas((v) => !v); setSidebarOpen(false) }}
         onUsage={() => { setShowUsage((v) => !v); setSidebarOpen(false) }}
         onClose={() => setSidebarOpen(false)}
@@ -217,6 +229,13 @@ function ChatLayout() {
             className="ml-auto px-2.5 py-1 border border-gray-700 text-xs text-gray-300"
           >
             Inbox {inbox.unreadCount > 0 ? `(${inbox.unreadCount})` : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowPlans((value) => !value)}
+            className="px-2.5 py-1 border border-gray-700 text-xs text-gray-300"
+          >
+            Plans
           </button>
         </div>
 
@@ -289,6 +308,23 @@ function ChatLayout() {
         error={usage.error}
         onRefresh={(hours) => { void usage.refresh(hours) }}
         onClose={() => setShowUsage(false)}
+      />
+      <PlanTrackerPanel
+        isOpen={showPlans}
+        plans={plans.plans}
+        loading={plans.loading}
+        error={plans.error}
+        onRefresh={plans.refresh}
+        onCreatePlan={plans.create}
+        onPatchPlan={plans.patchPlan}
+        onDeletePlan={plans.remove}
+        onAddMilestone={plans.addMilestone}
+        onUpdateMilestoneStatus={plans.updateMilestoneStatus}
+        onDeleteMilestone={plans.removeMilestone}
+        onAddTask={plans.addTask}
+        onUpdateTaskStatus={plans.updateTaskStatus}
+        onDeleteTask={plans.removeTask}
+        onClose={() => setShowPlans(false)}
       />
     </div>
   )
