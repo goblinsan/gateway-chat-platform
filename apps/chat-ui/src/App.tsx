@@ -266,6 +266,7 @@ function ChatLayout() {
           onUpdateMessageTtsAudio={updateMessageTtsAudio}
           onSetThreadTtsEnabled={setThreadTtsEnabled}
           onSetThreadDefaultModel={setThreadDefaultModel}
+          onPlansPossiblyChanged={() => { void refreshPlans() }}
         />
         {showWorkflows && (
           <WorkflowPanel agents={agents} onClose={() => setShowWorkflows(false)} />

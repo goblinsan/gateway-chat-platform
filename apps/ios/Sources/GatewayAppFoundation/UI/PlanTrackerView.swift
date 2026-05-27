@@ -1,6 +1,10 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
+extension Notification.Name {
+  static let gatewayPlansPossiblyChanged = Notification.Name("gatewayPlansPossiblyChanged")
+}
+
 private struct TextEntryContext: Identifiable {
   enum Kind {
     case createGoal
@@ -330,6 +334,9 @@ struct LivePlanTrackerView: View {
       }
       .task {
         await loadPlans()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: .gatewayPlansPossiblyChanged)) { _ in
+        Task { await loadPlans() }
       }
       .sheet(item: $textEntryContext) { context in
         TextEntrySheet(
