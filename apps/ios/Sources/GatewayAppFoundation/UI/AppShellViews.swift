@@ -320,37 +320,45 @@ struct MainNavigationView: View {
         .tag(0)
 
       DeferredTabView(isActive: selectedTab == 1) {
+        PlanTrackerView()
+      }
+        .tabItem {
+          Label("Plans", systemImage: "target")
+        }
+        .tag(1)
+
+      DeferredTabView(isActive: selectedTab == 2) {
         AlertInboxView(model: model)
       }
         .tabItem {
           Label("Alerts", systemImage: "bell")
         }
-        .tag(1)
+        .tag(2)
 
-      DeferredTabView(isActive: selectedTab == 2) {
+      DeferredTabView(isActive: selectedTab == 3) {
         ApprovalInboxView(model: model)
       }
         .tabItem {
           Label("Approvals", systemImage: "checkmark.seal")
         }
-        .tag(2)
+        .tag(3)
 
-      DeferredTabView(isActive: selectedTab == 3) {
+      DeferredTabView(isActive: selectedTab == 4) {
         SettingsView(model: model)
       }
         .tabItem {
           Label("Settings", systemImage: "gear")
         }
-        .tag(3)
+        .tag(4)
     }
     .onChange(of: model.pendingAlertID) { _, alertID in
       if alertID != nil {
-        selectedTab = 1
+        selectedTab = 2
       }
     }
     .onChange(of: model.pendingApprovalID) { _, approvalID in
       if approvalID != nil {
-        selectedTab = 2
+        selectedTab = 3
       }
     }
   }
@@ -367,6 +375,197 @@ struct DeferredTabView<Content: View>: View {
       } else {
         Color.clear
       }
+    }
+  }
+}
+
+// MARK: - Plan Tracker Views
+
+private enum PlanStatus: String {
+  case onTrack = "On track"
+  case atRisk = "At risk"
+  case blocked = "Blocked"
+  case complete = "Complete"
+}
+
+private struct PlanTask: Identifiable {
+  let id: String
+  let title: String
+  let status: PlanStatus
+}
+
+private struct PlanMilestone: Identifiable {
+  let id: String
+  let title: String
+  let status: PlanStatus
+  let progressPercent: Int
+  let tasks: [PlanTask]
+}
+
+private struct PlanGoal: Identifiable {
+  let id: String
+  let title: String
+  let status: PlanStatus
+  let progressPercent: Int
+  let nextReview: String
+  let sourceSystems: [String]
+  let metrics: [(label: String, value: String)]
+  let milestones: [PlanMilestone]
+}
+
+private let samplePlanGoals: [PlanGoal] = [
+  PlanGoal(
+    id: "goal-shared-planning",
+    title: "Shared visual planning across web + iPhone",
+    status: .onTrack,
+    progressPercent: 56,
+    nextReview: "Weekly · Monday",
+    sourceSystems: ["chat-ui", "GatewayAppFoundation", "Control plane"],
+    metrics: [
+      (label: "Open tasks", value: "5"),
+      (label: "Completed this week", value: "2"),
+      (label: "Stale items", value: "1"),
+    ],
+    milestones: [
+      PlanMilestone(
+        id: "milestone-web-surface",
+        title: "Deliver plan tracker in chat-ui",
+        status: .onTrack,
+        progressPercent: 70,
+        tasks: [
+          PlanTask(id: "task-web-hierarchy", title: "Render goals, milestones, and tasks", status: .complete),
+          PlanTask(id: "task-web-status", title: "Show progress and status rollups", status: .onTrack),
+          PlanTask(id: "task-web-nav", title: "Keep tracker outside transcript", status: .complete),
+        ]
+      ),
+      PlanMilestone(
+        id: "milestone-ios-surface",
+        title: "Deliver native plan tracker tab",
+        status: .atRisk,
+        progressPercent: 45,
+        tasks: [
+          PlanTask(id: "task-ios-overview", title: "Support top-level plan browsing", status: .onTrack),
+          PlanTask(id: "task-ios-drilldown", title: "Show milestone + task drill-down", status: .atRisk),
+          PlanTask(id: "task-ios-stale", title: "Call out blocked and stale work", status: .blocked),
+        ]
+      ),
+    ]
+  ),
+]
+
+private struct PlanStatusBadge: View {
+  let status: PlanStatus
+
+  private var color: Color {
+    switch status {
+    case .onTrack:
+      return .green
+    case .atRisk:
+      return .orange
+    case .blocked:
+      return .red
+    case .complete:
+      return .blue
+    }
+  }
+
+  var body: some View {
+    Text(status.rawValue)
+      .font(.caption2)
+      .padding(.horizontal, 8)
+      .padding(.vertical, 4)
+      .background(color.opacity(0.18))
+      .foregroundStyle(color)
+      .clipShape(Capsule())
+  }
+}
+
+struct PlanTrackerView: View {
+  @State private var selectedGoalID: String?
+  private let goals: [PlanGoal] = samplePlanGoals
+
+  private var selectedGoal: PlanGoal? {
+    if let selectedGoalID {
+      return goals.first(where: { $0.id == selectedGoalID }) ?? goals.first
+    }
+    return goals.first
+  }
+
+  var body: some View {
+    NavigationStack {
+      List {
+        Section("Goals") {
+          ForEach(goals) { goal in
+            Button {
+              selectedGoalID = goal.id
+            } label: {
+              VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                  Text(goal.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                  Spacer(minLength: 12)
+                  PlanStatusBadge(status: goal.status)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                  ProgressView(value: Double(goal.progressPercent), total: 100)
+                    .tint(.blue)
+                  Text("\(goal.progressPercent)% complete")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              }
+            }
+            .buttonStyle(.plain)
+          }
+        }
+
+        if let goal = selectedGoal {
+          Section("Goal details") {
+            LabeledContent("Next review", value: goal.nextReview)
+            LabeledContent("Sources", value: goal.sourceSystems.joined(separator: " · "))
+          }
+
+          Section("Progress metrics") {
+            ForEach(goal.metrics, id: \.label) { metric in
+              LabeledContent(metric.label, value: metric.value)
+            }
+          }
+
+          Section("Milestones") {
+            ForEach(goal.milestones) { milestone in
+              VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                  Text(milestone.title)
+                    .font(.subheadline.weight(.medium))
+                  Spacer(minLength: 12)
+                  PlanStatusBadge(status: milestone.status)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                  ProgressView(value: Double(milestone.progressPercent), total: 100)
+                    .tint(.blue)
+                  Text("\(milestone.progressPercent)% complete")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                ForEach(milestone.tasks) { task in
+                  HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "checklist")
+                      .foregroundStyle(.secondary)
+                    Text(task.title)
+                      .font(.footnote)
+                    Spacer(minLength: 12)
+                    PlanStatusBadge(status: task.status)
+                  }
+                }
+              }
+              .padding(.vertical, 4)
+            }
+          }
+        }
+      }
+      .navigationTitle("Plan Tracker")
     }
   }
 }
