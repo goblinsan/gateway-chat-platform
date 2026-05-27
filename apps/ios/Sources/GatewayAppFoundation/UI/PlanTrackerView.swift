@@ -142,6 +142,56 @@ struct LivePlanTrackerView: View {
                       .font(.caption)
                       .foregroundStyle(.secondary)
                   }
+                  if !plan.objectives.isEmpty {
+                    Text("Objectives: \(plan.objectives.joined(separator: " · "))")
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                  if !plan.principles.isEmpty {
+                    Text("Principles: \(plan.principles.joined(separator: " · "))")
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                  if !plan.baselineFacts.isEmpty {
+                    Text("Baseline: \(plan.baselineFacts.map { "\($0.label): \($0.value)" }.joined(separator: " · "))")
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                  if !plan.trackedMetrics.isEmpty {
+                    Text("Track: " + plan.trackedMetrics.map { metric in
+                      if let notes = metric.notes, !notes.isEmpty {
+                        return "\(metric.name) (\(notes))"
+                      }
+                      return metric.name
+                    }.joined(separator: " · "))
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                  if !plan.successCriteria.isEmpty {
+                    Text("Success: \(plan.successCriteria.joined(separator: " · "))")
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                  if !plan.cadence.isEmpty {
+                    Text("Cadence: " + plan.cadence.map { entry in
+                      let prefix = entry.day ?? entry.label ?? "Session"
+                      return "\(prefix): \(entry.activity)"
+                    }.joined(separator: " · "))
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                  if !plan.supportingSections.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                      Text("Supporting material")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                      ForEach(plan.supportingSections, id: \.title) { section in
+                        Text("\(section.title)\(section.summary.map { " — \($0)" } ?? "")")
+                          .font(.caption2)
+                          .foregroundStyle(.secondary)
+                      }
+                    }
+                  }
                   HStack {
                     Button("Edit title") {
                       textEntryContext = TextEntryContext(

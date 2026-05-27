@@ -5,6 +5,41 @@ export interface PlanMetric {
   value: string
 }
 
+export interface PlanFact {
+  label: string
+  value: string
+}
+
+export interface PlanTrackedMetric {
+  name: string
+  notes?: string
+  source?: string
+  cadence?: string
+  baseline?: string
+  target?: string
+}
+
+export interface PlanCadenceEntry {
+  label?: string
+  day?: string
+  activity: string
+  notes?: string
+}
+
+export interface PlanSupportingItem {
+  label?: string
+  kind?: string
+  content?: string
+  uri?: string
+}
+
+export interface PlanSupportingSection {
+  title: string
+  kind?: string
+  summary?: string
+  items: PlanSupportingItem[]
+}
+
 export interface PlanTask {
   id: string
   milestoneId: string
@@ -38,11 +73,18 @@ export interface PlanGoal {
   status: PlanStatus
   progressPercent: number
   category?: string
+  objectives: string[]
+  principles: string[]
   reviewCadence?: string
   nextReviewAt?: string
   tags: string[]
   sourceSystems: string[]
   metrics: PlanMetric[]
+  trackedMetrics: PlanTrackedMetric[]
+  baselineFacts: PlanFact[]
+  successCriteria: string[]
+  cadence: PlanCadenceEntry[]
+  supportingSections: PlanSupportingSection[]
   createdAt: string
   updatedAt: string
   milestones: PlanMilestone[]
@@ -62,11 +104,18 @@ export interface CreatePlanRequest {
   status?: PlanStatus
   progressPercent?: number
   category?: string
+  objectives?: string[]
+  principles?: string[]
   reviewCadence?: string
   nextReviewAt?: string
   tags?: string[]
   sourceSystems?: string[]
   metrics?: PlanMetric[]
+  trackedMetrics?: PlanTrackedMetric[]
+  baselineFacts?: PlanFact[]
+  successCriteria?: string[]
+  cadence?: PlanCadenceEntry[]
+  supportingSections?: PlanSupportingSection[]
 }
 
 export type UpdatePlanRequest = Partial<CreatePlanRequest>

@@ -142,6 +142,36 @@ export default function PlanTrackerPanel({
                   )}
                 </div>
               )}
+              {(plan.objectives.length > 0 || plan.principles.length > 0 || plan.baselineFacts.length > 0 || plan.trackedMetrics.length > 0 || plan.successCriteria.length > 0 || plan.cadence.length > 0 || plan.supportingSections.length > 0) && (
+                <div className="mt-3 space-y-2 text-[11px] text-gray-400">
+                  {plan.objectives.length > 0 && <p><span className="text-gray-500">Objectives:</span> {plan.objectives.join(' · ')}</p>}
+                  {plan.principles.length > 0 && <p><span className="text-gray-500">Principles:</span> {plan.principles.join(' · ')}</p>}
+                  {plan.baselineFacts.length > 0 && (
+                    <p><span className="text-gray-500">Baseline:</span> {plan.baselineFacts.map((fact) => `${fact.label}: ${fact.value}`).join(' · ')}</p>
+                  )}
+                  {plan.trackedMetrics.length > 0 && (
+                    <p><span className="text-gray-500">Track:</span> {plan.trackedMetrics.map((metric) => metric.notes ? `${metric.name} (${metric.notes})` : metric.name).join(' · ')}</p>
+                  )}
+                  {plan.successCriteria.length > 0 && <p><span className="text-gray-500">Success:</span> {plan.successCriteria.join(' · ')}</p>}
+                  {plan.cadence.length > 0 && (
+                    <p><span className="text-gray-500">Cadence:</span> {plan.cadence.map((entry) => `${entry.day ?? entry.label ?? 'Session'}: ${entry.activity}`).join(' · ')}</p>
+                  )}
+                  {plan.supportingSections.length > 0 && (
+                    <div>
+                      <p className="text-gray-500">Supporting material:</p>
+                      <ul className="mt-1 space-y-1">
+                        {plan.supportingSections.map((section) => (
+                          <li key={section.title}>
+                            <span className="text-gray-300">{section.title}</span>
+                            {section.summary ? ` — ${section.summary}` : ''}
+                            {section.items.length > 0 ? ` (${section.items.map((item) => item.label || item.uri || item.content || 'item').join(', ')})` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="mt-2 flex flex-wrap gap-2">

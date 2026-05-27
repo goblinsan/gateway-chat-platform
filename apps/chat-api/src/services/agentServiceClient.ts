@@ -731,6 +731,41 @@ export interface AgentServicePlanMilestone {
   tasks: AgentServicePlanTask[]
 }
 
+export interface AgentServicePlanFact {
+  label: string
+  value: string
+}
+
+export interface AgentServicePlanTrackedMetric {
+  name: string
+  notes?: string
+  source?: string
+  cadence?: string
+  baseline?: string
+  target?: string
+}
+
+export interface AgentServicePlanCadenceEntry {
+  label?: string
+  day?: string
+  activity: string
+  notes?: string
+}
+
+export interface AgentServicePlanSupportingItem {
+  label?: string
+  kind?: string
+  content?: string
+  uri?: string
+}
+
+export interface AgentServicePlanSupportingSection {
+  title: string
+  kind?: string
+  summary?: string
+  items: AgentServicePlanSupportingItem[]
+}
+
 export interface AgentServicePlanProgress {
   milestone_count?: number
   completed_milestones?: number
@@ -749,12 +784,19 @@ export interface AgentServicePlan {
   vision?: string
   target?: string
   category?: string
+  objectives?: string[]
+  principles?: string[]
   tags?: string[]
   data_sources?: string[]
   connectors?: Array<Record<string, unknown>>
   review_cadence?: string
   summary?: string
   metrics?: Record<string, unknown>
+  tracked_metrics?: AgentServicePlanTrackedMetric[]
+  baseline_facts?: AgentServicePlanFact[]
+  success_criteria?: string[]
+  cadence?: AgentServicePlanCadenceEntry[]
+  supporting_sections?: AgentServicePlanSupportingSection[]
   milestones?: AgentServicePlanMilestone[]
   progress?: AgentServicePlanProgress
   steps?: Array<Record<string, unknown>>
@@ -803,6 +845,55 @@ function normalizePlanProgressRecord(input: unknown): AgentServicePlanProgress |
   }
 }
 
+function normalizePlanFactRecord(input: Record<string, unknown>): AgentServicePlanFact {
+  return {
+    label: String(input.label ?? ''),
+    value: String(input.value ?? ''),
+  }
+}
+
+function normalizePlanTrackedMetricRecord(input: Record<string, unknown>): AgentServicePlanTrackedMetric {
+  return {
+    name: String(input.name ?? ''),
+    notes: typeof input.notes === 'string' ? input.notes : undefined,
+    source: typeof input.source === 'string' ? input.source : undefined,
+    cadence: typeof input.cadence === 'string' ? input.cadence : undefined,
+    baseline: typeof input.baseline === 'string' ? input.baseline : undefined,
+    target: typeof input.target === 'string' ? input.target : undefined,
+  }
+}
+
+function normalizePlanCadenceEntryRecord(input: Record<string, unknown>): AgentServicePlanCadenceEntry {
+  return {
+    label: typeof input.label === 'string' ? input.label : undefined,
+    day: typeof input.day === 'string' ? input.day : undefined,
+    activity: String(input.activity ?? ''),
+    notes: typeof input.notes === 'string' ? input.notes : undefined,
+  }
+}
+
+function normalizePlanSupportingItemRecord(input: Record<string, unknown>): AgentServicePlanSupportingItem {
+  return {
+    label: typeof input.label === 'string' ? input.label : undefined,
+    kind: typeof input.kind === 'string' ? input.kind : undefined,
+    content: typeof input.content === 'string' ? input.content : undefined,
+    uri: typeof input.uri === 'string' ? input.uri : undefined,
+  }
+}
+
+function normalizePlanSupportingSectionRecord(input: Record<string, unknown>): AgentServicePlanSupportingSection {
+  return {
+    title: String(input.title ?? ''),
+    kind: typeof input.kind === 'string' ? input.kind : undefined,
+    summary: typeof input.summary === 'string' ? input.summary : undefined,
+    items: Array.isArray(input.items)
+      ? input.items
+          .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+          .map(normalizePlanSupportingItemRecord)
+      : [],
+  }
+}
+
 function normalizePlanRecord(input: Record<string, unknown>): AgentServicePlan {
   const milestones = Array.isArray(input.milestones)
     ? input.milestones
@@ -817,6 +908,8 @@ function normalizePlanRecord(input: Record<string, unknown>): AgentServicePlan {
     vision: typeof input.vision === 'string' ? input.vision : undefined,
     target: typeof input.target === 'string' ? input.target : undefined,
     category: typeof input.category === 'string' ? input.category : undefined,
+    objectives: Array.isArray(input.objectives) ? input.objectives.filter((value): value is string => typeof value === 'string') : [],
+    principles: Array.isArray(input.principles) ? input.principles.filter((value): value is string => typeof value === 'string') : [],
     tags: Array.isArray(input.tags) ? input.tags.filter((value): value is string => typeof value === 'string') : [],
     data_sources: Array.isArray(input.data_sources)
       ? input.data_sources.filter((value): value is string => typeof value === 'string')
@@ -829,6 +922,29 @@ function normalizePlanRecord(input: Record<string, unknown>): AgentServicePlan {
     metrics: input.metrics && typeof input.metrics === 'object' && !Array.isArray(input.metrics)
       ? input.metrics as Record<string, unknown>
       : {},
+    tracked_metrics: Array.isArray(input.tracked_metrics)
+      ? input.tracked_metrics
+          .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+          .map(normalizePlanTrackedMetricRecord)
+      : [],
+    baseline_facts: Array.isArray(input.baseline_facts)
+      ? input.baseline_facts
+          .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+          .map(normalizePlanFactRecord)
+      : [],
+    success_criteria: Array.isArray(input.success_criteria)
+      ? input.success_criteria.filter((value): value is string => typeof value === 'string')
+      : [],
+    cadence: Array.isArray(input.cadence)
+      ? input.cadence
+          .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+          .map(normalizePlanCadenceEntryRecord)
+      : [],
+    supporting_sections: Array.isArray(input.supporting_sections)
+      ? input.supporting_sections
+          .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+          .map(normalizePlanSupportingSectionRecord)
+      : [],
     milestones,
     progress: normalizePlanProgressRecord(input.progress),
     steps: Array.isArray(input.steps)
@@ -876,11 +992,18 @@ export async function upsertPlanInAgentService(
     vision?: string
     target?: string
     category?: string
+    objectives?: string[]
+    principles?: string[]
     tags?: string[]
     data_sources?: string[]
     review_cadence?: string
     summary?: string
     metrics?: Record<string, unknown>
+    tracked_metrics?: AgentServicePlanTrackedMetric[]
+    baseline_facts?: AgentServicePlanFact[]
+    success_criteria?: string[]
+    cadence?: AgentServicePlanCadenceEntry[]
+    supporting_sections?: AgentServicePlanSupportingSection[]
     milestones?: AgentServicePlanMilestone[]
     steps?: Array<Record<string, unknown>>
   },

@@ -509,6 +509,41 @@ public struct GatewayPlanMetric: Codable, Equatable, Sendable {
   public let value: String
 }
 
+public struct GatewayPlanFact: Codable, Equatable, Sendable {
+  public let label: String
+  public let value: String
+}
+
+public struct GatewayPlanTrackedMetric: Codable, Equatable, Sendable {
+  public let name: String
+  public let notes: String?
+  public let source: String?
+  public let cadence: String?
+  public let baseline: String?
+  public let target: String?
+}
+
+public struct GatewayPlanCadenceEntry: Codable, Equatable, Sendable {
+  public let label: String?
+  public let day: String?
+  public let activity: String
+  public let notes: String?
+}
+
+public struct GatewayPlanSupportingItem: Codable, Equatable, Sendable {
+  public let label: String?
+  public let kind: String?
+  public let content: String?
+  public let uri: String?
+}
+
+public struct GatewayPlanSupportingSection: Codable, Equatable, Sendable {
+  public let title: String
+  public let kind: String?
+  public let summary: String?
+  public let items: [GatewayPlanSupportingItem]
+}
+
 public struct GatewayPlanTask: Codable, Equatable, Identifiable, Sendable {
   public let id: String
   public let milestoneId: String
@@ -542,11 +577,18 @@ public struct GatewayPlanGoal: Codable, Equatable, Identifiable, Sendable {
   public let status: GatewayPlanStatus
   public let progressPercent: Int
   public let category: String?
+  public let objectives: [String]
+  public let principles: [String]
   public let reviewCadence: String?
   public let nextReviewAt: String?
   public let tags: [String]
   public let sourceSystems: [String]
   public let metrics: [GatewayPlanMetric]
+  public let trackedMetrics: [GatewayPlanTrackedMetric]
+  public let baselineFacts: [GatewayPlanFact]
+  public let successCriteria: [String]
+  public let cadence: [GatewayPlanCadenceEntry]
+  public let supportingSections: [GatewayPlanSupportingSection]
   public let createdAt: String
   public let updatedAt: String
   public let milestones: [GatewayPlanMilestone]
