@@ -1313,6 +1313,8 @@ struct ChatView: View {
     .text,
     UTType(filenameExtension: "md") ?? .plainText,
     UTType(filenameExtension: "markdown") ?? .plainText,
+    UTType(filenameExtension: "yaml") ?? .plainText,
+    UTType(filenameExtension: "yml") ?? .plainText,
   ]
   #endif
   private var autoSpeakKey: String { threadID ?? "" }
@@ -1925,10 +1927,34 @@ struct ChatView: View {
     do {
       let importedText = try readImportedText(from: url)
       let importedName = url.deletingPathExtension().lastPathComponent
-      prompt = Self.makePlanImportPrompt(documentName: importedName, text: importedText)
-      importStatusMessage = "Imported \(url.lastPathComponent). Review the prompt, then send it to ingest the plan."
-      errorMessage = nil
-      isPromptFocused = true
+      if Self.looksLikeStructuredPlanDocument(importedText) {
+        Task {
+          do {
+            guard let baseURL = model.gatewayBaseURL else {
+              errorMessage = GatewayChatError.missingConfiguration.localizedDescription
+              return
+            }
+            _ = try await model.chatClient.importPlanDocument(
+              baseURL: baseURL,
+              token: model.gatewayToken,
+              title: importedName,
+              text: importedText,
+              source: importedName
+            )
+            NotificationCenter.default.post(name: .gatewayPlansPossiblyChanged, object: nil)
+            importStatusMessage = "Imported \(url.lastPathComponent) into Plans."
+            errorMessage = nil
+          } catch {
+            errorMessage = "Unable to import structured plan: \(error.localizedDescription)"
+            importStatusMessage = nil
+          }
+        }
+      } else {
+        prompt = Self.makePlanImportPrompt(documentName: importedName, text: importedText)
+        importStatusMessage = "Imported \(url.lastPathComponent). Review the prompt, then send it to ingest the plan."
+        errorMessage = nil
+        isPromptFocused = true
+      }
     } catch {
       errorMessage = "Unable to import plan document: \(error.localizedDescription)"
       importStatusMessage = nil
@@ -1959,6 +1985,14 @@ struct ChatView: View {
       header = "Please ingest the following plan document into my durable plans using plan_ingest_text. Use \(safeName) as the source label, infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it, then briefly summarize what you stored and any important gaps."
     }
     return "\(header)\n\n<plan_document>\n\(text)\n</plan_document>"
+  }
+
+  private static func looksLikeStructuredPlanDocument(_ text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("{") {
+      return true
+    }
+    return trimmed.range(of: #"(?im)^title\s*:"# , options: .regularExpression) != nil
   }
   #endif
 

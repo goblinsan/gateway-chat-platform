@@ -21,6 +21,11 @@ export async function createPlan(data: CreatePlanRequest): Promise<PlanGoal> {
   return res.data.plan
 }
 
+export async function importPlanDocument(data: { title?: string; text: string; source?: string }): Promise<PlanGoal> {
+  const res = await apiClient.post<PlanResponse>('/plans/import', data)
+  return res.data.plan
+}
+
 export async function updatePlan(planId: string, data: UpdatePlanRequest): Promise<PlanGoal> {
   const res = await apiClient.put<PlanResponse>(`/plans/${encodeURIComponent(planId)}`, data)
   return res.data.plan

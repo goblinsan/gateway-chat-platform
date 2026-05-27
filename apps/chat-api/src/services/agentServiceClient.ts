@@ -709,6 +709,19 @@ export interface AgentServicePlanTask {
   completed_at?: string
 }
 
+export interface AgentServicePlanImportRequest {
+  id?: string
+  title?: string
+  text: string
+  status?: string
+  category?: string
+  tags?: string[]
+  data_sources?: string[]
+  review_cadence?: string
+  metrics?: Record<string, unknown>
+  source?: string
+}
+
 export interface AgentServicePlanMilestone {
   id: string
   title: string
@@ -877,6 +890,24 @@ export async function upsertPlanInAgentService(
     method: 'POST',
     headers: buildUserHeaders(userId),
     body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { plan?: Record<string, unknown> }
+  return normalizePlanRecord(body.plan ?? {})
+}
+
+export async function importPlanInAgentService(
+  userId: string,
+  plan: AgentServicePlanImportRequest,
+): Promise<AgentServicePlan> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/plans/import`, {
+    method: 'POST',
+    headers: buildUserHeaders(userId),
+    body: JSON.stringify(plan),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

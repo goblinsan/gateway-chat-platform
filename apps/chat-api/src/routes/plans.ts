@@ -21,6 +21,7 @@ import {
   deletePlanInAgentService,
   fetchPlanFromAgentService,
   fetchPlansFromAgentService,
+  importPlanInAgentService,
   upsertPlanInAgentService,
 } from '../services/agentServiceClient'
 
@@ -263,6 +264,35 @@ export default async function planRoutes(app: FastifyInstance) {
         return reply.status(201).send({ plan: toPlanModel(plan) })
       } catch (err) {
         return sendAgentServiceError(reply, req, err, 'create plan')
+      }
+    },
+  )
+
+  app.post<{ Body: { title?: string; text: string; source?: string } }>(
+    '/plans/import',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['text'],
+          properties: {
+            title: { type: 'string', maxLength: 200 },
+            text: { type: 'string', minLength: 1, maxLength: 200000 },
+            source: { type: 'string', maxLength: 200 },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      try {
+        const plan = await importPlanInAgentService(req.userId, {
+          title: req.body.title?.trim() || undefined,
+          text: req.body.text,
+          source: req.body.source?.trim() || undefined,
+        })
+        return reply.code(201).send({ plan: toPlanModel(plan) })
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'import plan')
       }
     },
   )

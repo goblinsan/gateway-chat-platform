@@ -721,6 +721,7 @@ public protocol GatewayChatServing: Sendable {
   // MARK: - Plan tracker
 
   func fetchPlans(baseURL: URL, token: String?) async throws -> [GatewayPlanGoal]
+  func importPlanDocument(baseURL: URL, token: String?, title: String?, text: String, source: String?) async throws -> GatewayPlanGoal
   func createPlan(baseURL: URL, token: String?, title: String, vision: String?) async throws -> GatewayPlanGoal
   func updatePlan(baseURL: URL, token: String?, planID: String, title: String?, status: GatewayPlanStatus?) async throws -> GatewayPlanGoal
   func deletePlan(baseURL: URL, token: String?, planID: String) async throws
@@ -1394,6 +1395,35 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     }
     let decoded = try JSONDecoder().decode(PlansListResponse.self, from: data)
     return decoded.plans
+  }
+
+  public func importPlanDocument(
+    baseURL: URL,
+    token: String?,
+    title: String?,
+    text: String,
+    source: String?
+  ) async throws -> GatewayPlanGoal {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/import") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    let payload: [String: String] = [
+      "title": title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+      "text": text,
+      "source": source?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+    ]
+    request.httpBody = try JSONEncoder().encode(payload)
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let decoded = try JSONDecoder().decode(PlanResponse.self, from: data)
+    return decoded.plan
   }
 
   public func createPlan(

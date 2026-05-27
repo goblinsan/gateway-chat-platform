@@ -12,6 +12,7 @@ vi.mock('../config/env', () => ({
 const mockFetchPlans = vi.fn()
 const mockFetchPlan = vi.fn()
 const mockUpsertPlan = vi.fn()
+const mockImportPlan = vi.fn()
 const mockDeletePlan = vi.fn()
 
 vi.mock('../services/agentServiceClient', () => ({
@@ -24,6 +25,7 @@ vi.mock('../services/agentServiceClient', () => ({
   fetchPlansFromAgentService: (...args: unknown[]) => mockFetchPlans(...args),
   fetchPlanFromAgentService: (...args: unknown[]) => mockFetchPlan(...args),
   upsertPlanInAgentService: (...args: unknown[]) => mockUpsertPlan(...args),
+  importPlanInAgentService: (...args: unknown[]) => mockImportPlan(...args),
   deletePlanInAgentService: (...args: unknown[]) => mockDeletePlan(...args),
 }))
 
@@ -77,6 +79,7 @@ beforeEach(() => {
   mockFetchPlans.mockResolvedValue([PLAN_ROW])
   mockFetchPlan.mockResolvedValue(PLAN_ROW)
   mockUpsertPlan.mockResolvedValue(PLAN_ROW)
+  mockImportPlan.mockResolvedValue(PLAN_ROW)
   mockDeletePlan.mockResolvedValue(undefined)
 })
 
@@ -114,6 +117,28 @@ describe('POST /api/plans', () => {
       tags: ['planning'],
       milestones: [],
     }))
+  })
+})
+
+describe('POST /api/plans/import', () => {
+  it('imports a structured plan document through agent-service', async () => {
+    const app = await buildApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/plans/import',
+      payload: {
+        title: 'Endurance Plan',
+        source: 'endurance-yaml',
+        text: 'title: Endurance Plan\ncategory: health\nmilestones:\n  - title: Week 1',
+      },
+    })
+
+    expect(response.statusCode).toBe(201)
+    expect(mockImportPlan).toHaveBeenCalledWith('me', expect.objectContaining({
+      title: 'Endurance Plan',
+      source: 'endurance-yaml',
+    }))
+    expect(response.body).toContain('"title":"Shipping plan tracker"')
   })
 })
 

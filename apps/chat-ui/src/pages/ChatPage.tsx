@@ -11,6 +11,7 @@ import MicButton from '../components/SpeechControls'
 import ModelPicker from '../components/ModelPicker'
 import { useTts } from '../hooks/useTts'
 import { synthesizeSpeechToBase64 } from '../api/tts'
+import { importPlanDocument } from '../api/plans'
 
 interface ChatPageProps {
   activeAgentId: string
@@ -401,12 +402,9 @@ export default function ChatPage({
     [activeAgentId, activeThread, activeThreadId, onSetThreadMessages],
   )
 
-  const makePlanImportPrompt = useCallback((documentName: string, text: string) => {
-    const safeName = documentName.trim()
-    const header = safeName
-      ? `Please ingest the following plan document into my durable plans using plan_ingest_text. Use ${safeName} as the source label, infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it, then briefly summarize what you stored and any important gaps.`
-      : 'Please ingest the following plan document into my durable plans using plan_ingest_text. Infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it. Then briefly summarize what you stored and any important gaps.'
-    return `${header}\n\n<plan_document>\n${text}\n</plan_document>`
+  const looksLikeStructuredPlanDocument = useCallback((text: string) => {
+    const trimmed = text.trim()
+    return trimmed.startsWith('{') || /^title\s*:/im.test(trimmed)
   }, [])
 
   const handlePlanImportFile = useCallback(async (file: File | null) => {
@@ -415,11 +413,21 @@ export default function ChatPage({
       const text = (await file.text()).trim()
       if (!text) return
       const name = file.name.replace(/\.[^.]+$/, '')
-      setInput(makePlanImportPrompt(name, text))
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus()
-        adjustTextarea()
-      })
+      if (looksLikeStructuredPlanDocument(text)) {
+        await importPlanDocument({ title: name, text, source: name })
+        onPlansPossiblyChanged?.()
+        setInput('')
+      } else {
+        const safeName = name.trim()
+        const header = safeName
+          ? `Please ingest the following plan document into my durable plans using plan_ingest_text. Use ${safeName} as the source label, infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it, then briefly summarize what you stored and any important gaps.`
+          : 'Please ingest the following plan document into my durable plans using plan_ingest_text. Infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it. Then briefly summarize what you stored and any important gaps.'
+        setInput(`${header}\n\n<plan_document>\n${text}\n</plan_document>`)
+        requestAnimationFrame(() => {
+          textareaRef.current?.focus()
+          adjustTextarea()
+        })
+      }
     } catch (err) {
       console.warn('[ChatPage] Failed to import plan file:', err)
     } finally {
@@ -427,7 +435,7 @@ export default function ChatPage({
         planImportInputRef.current.value = ''
       }
     }
-  }, [adjustTextarea, makePlanImportPrompt])
+  }, [adjustTextarea, looksLikeStructuredPlanDocument, onPlansPossiblyChanged])
 
   const handleHandoffConfirm = useCallback(async (toAgentId: string): Promise<void> => {
     if (!activeThreadId || !activeAgentId) return
@@ -608,7 +616,7 @@ export default function ChatPage({
           <input
             ref={planImportInputRef}
             type="file"
-            accept=".txt,.md,.markdown,text/plain,text/markdown"
+            accept=".txt,.md,.markdown,.yaml,.yml,text/plain,text/markdown,application/yaml,text/yaml"
             className="hidden"
             onChange={(event) => {
               void handlePlanImportFile(event.target.files?.[0] ?? null)
