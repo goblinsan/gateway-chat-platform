@@ -700,6 +700,204 @@ export async function deleteScheduleInAgentService(userId: string, scheduleId: s
   }
 }
 
+export interface AgentServicePlanTask {
+  id: string
+  title: string
+  status: string
+  notes?: string
+  due_at?: string
+  completed_at?: string
+}
+
+export interface AgentServicePlanMilestone {
+  id: string
+  title: string
+  status: string
+  summary?: string
+  target_date?: string
+  tasks: AgentServicePlanTask[]
+}
+
+export interface AgentServicePlanProgress {
+  milestone_count?: number
+  completed_milestones?: number
+  task_count?: number
+  completed_tasks?: number
+  percent_complete?: number
+  is_stale?: boolean
+  next_review_at?: string
+}
+
+export interface AgentServicePlan {
+  id: string
+  user_id: string
+  title: string
+  status: string
+  vision?: string
+  target?: string
+  category?: string
+  tags?: string[]
+  data_sources?: string[]
+  connectors?: Array<Record<string, unknown>>
+  review_cadence?: string
+  summary?: string
+  metrics?: Record<string, unknown>
+  milestones?: AgentServicePlanMilestone[]
+  progress?: AgentServicePlanProgress
+  steps?: Array<Record<string, unknown>>
+  created_at?: string
+  updated_at?: string
+}
+
+function normalizePlanTaskRecord(input: Record<string, unknown>): AgentServicePlanTask {
+  return {
+    id: String(input.id ?? ''),
+    title: String(input.title ?? ''),
+    status: String(input.status ?? ''),
+    notes: typeof input.notes === 'string' ? input.notes : undefined,
+    due_at: typeof input.due_at === 'string' ? input.due_at : undefined,
+    completed_at: typeof input.completed_at === 'string' ? input.completed_at : undefined,
+  }
+}
+
+function normalizePlanMilestoneRecord(input: Record<string, unknown>): AgentServicePlanMilestone {
+  const tasks = Array.isArray(input.tasks)
+    ? input.tasks
+        .filter((task): task is Record<string, unknown> => Boolean(task) && typeof task === 'object' && !Array.isArray(task))
+        .map(normalizePlanTaskRecord)
+    : []
+  return {
+    id: String(input.id ?? ''),
+    title: String(input.title ?? ''),
+    status: String(input.status ?? ''),
+    summary: typeof input.summary === 'string' ? input.summary : undefined,
+    target_date: typeof input.target_date === 'string' ? input.target_date : undefined,
+    tasks,
+  }
+}
+
+function normalizePlanProgressRecord(input: unknown): AgentServicePlanProgress | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const progress = input as Record<string, unknown>
+  return {
+    milestone_count: typeof progress.milestone_count === 'number' ? progress.milestone_count : undefined,
+    completed_milestones: typeof progress.completed_milestones === 'number' ? progress.completed_milestones : undefined,
+    task_count: typeof progress.task_count === 'number' ? progress.task_count : undefined,
+    completed_tasks: typeof progress.completed_tasks === 'number' ? progress.completed_tasks : undefined,
+    percent_complete: typeof progress.percent_complete === 'number' ? progress.percent_complete : undefined,
+    is_stale: typeof progress.is_stale === 'boolean' ? progress.is_stale : undefined,
+    next_review_at: typeof progress.next_review_at === 'string' ? progress.next_review_at : undefined,
+  }
+}
+
+function normalizePlanRecord(input: Record<string, unknown>): AgentServicePlan {
+  const milestones = Array.isArray(input.milestones)
+    ? input.milestones
+        .filter((milestone): milestone is Record<string, unknown> => Boolean(milestone) && typeof milestone === 'object' && !Array.isArray(milestone))
+        .map(normalizePlanMilestoneRecord)
+    : []
+  return {
+    id: String(input.id ?? ''),
+    user_id: String(input.user_id ?? ''),
+    title: String(input.title ?? ''),
+    status: String(input.status ?? ''),
+    vision: typeof input.vision === 'string' ? input.vision : undefined,
+    target: typeof input.target === 'string' ? input.target : undefined,
+    category: typeof input.category === 'string' ? input.category : undefined,
+    tags: Array.isArray(input.tags) ? input.tags.filter((value): value is string => typeof value === 'string') : [],
+    data_sources: Array.isArray(input.data_sources)
+      ? input.data_sources.filter((value): value is string => typeof value === 'string')
+      : [],
+    connectors: Array.isArray(input.connectors)
+      ? input.connectors.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+      : [],
+    review_cadence: typeof input.review_cadence === 'string' ? input.review_cadence : undefined,
+    summary: typeof input.summary === 'string' ? input.summary : undefined,
+    metrics: input.metrics && typeof input.metrics === 'object' && !Array.isArray(input.metrics)
+      ? input.metrics as Record<string, unknown>
+      : {},
+    milestones,
+    progress: normalizePlanProgressRecord(input.progress),
+    steps: Array.isArray(input.steps)
+      ? input.steps.filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+      : [],
+    created_at: typeof input.created_at === 'string' ? input.created_at : undefined,
+    updated_at: typeof input.updated_at === 'string' ? input.updated_at : undefined,
+  }
+}
+
+export async function fetchPlansFromAgentService(userId: string): Promise<AgentServicePlan[]> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/plans`, {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { plans?: Record<string, unknown>[] }
+  return (body.plans ?? []).map(normalizePlanRecord)
+}
+
+export async function fetchPlanFromAgentService(userId: string, planId: string): Promise<AgentServicePlan> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/plans/${encodeURIComponent(planId)}`, {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { plan?: Record<string, unknown> }
+  return normalizePlanRecord(body.plan ?? {})
+}
+
+export async function upsertPlanInAgentService(
+  userId: string,
+  input: {
+    id?: string
+    title: string
+    status?: string
+    vision?: string
+    target?: string
+    category?: string
+    tags?: string[]
+    data_sources?: string[]
+    review_cadence?: string
+    summary?: string
+    metrics?: Record<string, unknown>
+    milestones?: AgentServicePlanMilestone[]
+    steps?: Array<Record<string, unknown>>
+  },
+): Promise<AgentServicePlan> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/plans`, {
+    method: 'POST',
+    headers: buildUserHeaders(userId),
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { plan?: Record<string, unknown> }
+  return normalizePlanRecord(body.plan ?? {})
+}
+
+export async function deletePlanInAgentService(userId: string, planId: string): Promise<void> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/plans/${encodeURIComponent(planId)}`, {
+    method: 'DELETE',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+}
+
 export async function registerDeviceTokenInAgentService(
   userId: string,
   input: { platform: string; token: string; app_version?: string },

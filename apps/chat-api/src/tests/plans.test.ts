@@ -9,48 +9,22 @@ vi.mock('../config/env', () => ({
   }),
 }))
 
-const mockPlanFindMany = vi.fn()
-const mockPlanCreate = vi.fn()
-const mockPlanFindFirst = vi.fn()
-const mockPlanUpdate = vi.fn()
-const mockPlanDelete = vi.fn()
+const mockFetchPlans = vi.fn()
+const mockFetchPlan = vi.fn()
+const mockUpsertPlan = vi.fn()
+const mockDeletePlan = vi.fn()
 
-const mockMilestoneCount = vi.fn()
-const mockMilestoneCreate = vi.fn()
-const mockMilestoneFindFirst = vi.fn()
-const mockMilestoneUpdate = vi.fn()
-const mockMilestoneDelete = vi.fn()
-
-const mockTaskCount = vi.fn()
-const mockTaskCreate = vi.fn()
-const mockTaskFindFirst = vi.fn()
-const mockTaskUpdate = vi.fn()
-const mockTaskDelete = vi.fn()
-
-vi.mock('../services/db', () => ({
-  getPrismaClient: () => ({
-    plan: {
-      findMany: (...args: unknown[]) => mockPlanFindMany(...args),
-      create: (...args: unknown[]) => mockPlanCreate(...args),
-      findFirst: (...args: unknown[]) => mockPlanFindFirst(...args),
-      update: (...args: unknown[]) => mockPlanUpdate(...args),
-      delete: (...args: unknown[]) => mockPlanDelete(...args),
-    },
-    planMilestone: {
-      count: (...args: unknown[]) => mockMilestoneCount(...args),
-      create: (...args: unknown[]) => mockMilestoneCreate(...args),
-      findFirst: (...args: unknown[]) => mockMilestoneFindFirst(...args),
-      update: (...args: unknown[]) => mockMilestoneUpdate(...args),
-      delete: (...args: unknown[]) => mockMilestoneDelete(...args),
-    },
-    planTask: {
-      count: (...args: unknown[]) => mockTaskCount(...args),
-      create: (...args: unknown[]) => mockTaskCreate(...args),
-      findFirst: (...args: unknown[]) => mockTaskFindFirst(...args),
-      update: (...args: unknown[]) => mockTaskUpdate(...args),
-      delete: (...args: unknown[]) => mockTaskDelete(...args),
-    },
-  }),
+vi.mock('../services/agentServiceClient', () => ({
+  AgentServiceError: class AgentServiceError extends Error {
+    constructor(message: string, public readonly statusCode?: number) {
+      super(message)
+      this.name = 'AgentServiceError'
+    }
+  },
+  fetchPlansFromAgentService: (...args: unknown[]) => mockFetchPlans(...args),
+  fetchPlanFromAgentService: (...args: unknown[]) => mockFetchPlan(...args),
+  upsertPlanInAgentService: (...args: unknown[]) => mockUpsertPlan(...args),
+  deletePlanInAgentService: (...args: unknown[]) => mockDeletePlan(...args),
 }))
 
 import userIdentityPlugin from '../plugins/userIdentity'
@@ -63,72 +37,51 @@ async function buildApp() {
   return app
 }
 
-const TASK_ROW = {
-  id: 'task-1',
-  milestoneId: 'milestone-1',
-  title: 'Build list',
-  notes: null,
-  status: 'on_track',
-  progressPercent: 30,
-  orderIndex: 0,
-  createdAt: new Date('2026-05-27T00:00:00.000Z'),
-  updatedAt: new Date('2026-05-27T00:00:00.000Z'),
-}
-
-const MILESTONE_ROW = {
-  id: 'milestone-1',
-  planId: 'plan-1',
-  title: 'MVP',
-  notes: null,
-  status: 'on_track',
-  progressPercent: 45,
-  orderIndex: 0,
-  createdAt: new Date('2026-05-27T00:00:00.000Z'),
-  updatedAt: new Date('2026-05-27T00:00:00.000Z'),
-  tasks: [TASK_ROW],
-}
-
 const PLAN_ROW = {
   id: 'plan-1',
-  userId: 'alice',
+  user_id: 'alice',
   title: 'Shipping plan tracker',
   vision: 'Unified planning',
-  status: 'on_track',
-  progressPercent: 56,
+  status: 'active',
   category: 'product',
-  reviewCadence: 'Weekly',
-  nextReviewAt: new Date('2026-06-01T00:00:00.000Z'),
-  tagsJson: JSON.stringify(['planning']),
-  sourceSystemsJson: JSON.stringify(['chat-ui']),
-  metricsJson: JSON.stringify([{ label: 'Open tasks', value: '3' }]),
-  createdAt: new Date('2026-05-27T00:00:00.000Z'),
-  updatedAt: new Date('2026-05-27T00:00:00.000Z'),
-  milestones: [MILESTONE_ROW],
+  review_cadence: 'Weekly',
+  tags: ['planning'],
+  data_sources: ['chat-ui'],
+  metrics: { 'Open tasks': '3' },
+  progress: {
+    percent_complete: 56,
+    next_review_at: '2026-06-01T00:00:00.000Z',
+  },
+  created_at: '2026-05-27T00:00:00.000Z',
+  updated_at: '2026-05-27T00:00:00.000Z',
+  milestones: [
+    {
+      id: 'milestone-1',
+      title: 'MVP',
+      status: 'active',
+      summary: 'Ship the first tracker slice',
+      tasks: [
+        {
+          id: 'task-1',
+          title: 'Build list',
+          notes: 'Focus on sidebar layout',
+          status: 'todo',
+        },
+      ],
+    },
+  ],
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockPlanFindMany.mockResolvedValue([PLAN_ROW])
-  mockPlanCreate.mockResolvedValue(PLAN_ROW)
-  mockPlanFindFirst.mockResolvedValue(PLAN_ROW)
-  mockPlanUpdate.mockResolvedValue(PLAN_ROW)
-  mockPlanDelete.mockResolvedValue(undefined)
-
-  mockMilestoneCount.mockResolvedValue(1)
-  mockMilestoneCreate.mockResolvedValue(MILESTONE_ROW)
-  mockMilestoneFindFirst.mockResolvedValue(MILESTONE_ROW)
-  mockMilestoneUpdate.mockResolvedValue(MILESTONE_ROW)
-  mockMilestoneDelete.mockResolvedValue(undefined)
-
-  mockTaskCount.mockResolvedValue(1)
-  mockTaskCreate.mockResolvedValue(TASK_ROW)
-  mockTaskFindFirst.mockResolvedValue(TASK_ROW)
-  mockTaskUpdate.mockResolvedValue(TASK_ROW)
-  mockTaskDelete.mockResolvedValue(undefined)
+  mockFetchPlans.mockResolvedValue([PLAN_ROW])
+  mockFetchPlan.mockResolvedValue(PLAN_ROW)
+  mockUpsertPlan.mockResolvedValue(PLAN_ROW)
+  mockDeletePlan.mockResolvedValue(undefined)
 })
 
 describe('GET /api/plans', () => {
-  it('returns user plan hierarchy', async () => {
+  it('returns user plan hierarchy from agent-service', async () => {
     const app = await buildApp()
     const res = await app.inject({
       method: 'GET',
@@ -141,14 +94,12 @@ describe('GET /api/plans', () => {
     expect(body.plans).toHaveLength(1)
     expect(body.plans[0].title).toBe('Shipping plan tracker')
     expect(body.plans[0].milestones[0].tasks[0].title).toBe('Build list')
-    expect(mockPlanFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { userId: 'alice' },
-    }))
+    expect(mockFetchPlans).toHaveBeenCalledWith('alice')
   })
 })
 
 describe('POST /api/plans', () => {
-  it('creates plan for caller', async () => {
+  it('creates plan for caller through agent-service', async () => {
     const app = await buildApp()
     const res = await app.inject({
       method: 'POST',
@@ -158,18 +109,16 @@ describe('POST /api/plans', () => {
     })
 
     expect(res.statusCode).toBe(201)
-    expect(mockPlanCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        userId: 'alice',
-        title: 'Shipping plan tracker',
-      }),
+    expect(mockUpsertPlan).toHaveBeenCalledWith('alice', expect.objectContaining({
+      title: 'Shipping plan tracker',
+      tags: ['planning'],
+      milestones: [],
     }))
   })
 })
 
 describe('PUT /api/plans/:planId', () => {
-  it('returns 404 when plan not owned by user', async () => {
-    mockPlanFindFirst.mockResolvedValueOnce(null)
+  it('updates an owned plan through agent-service', async () => {
     const app = await buildApp()
     const res = await app.inject({
       method: 'PUT',
@@ -178,8 +127,12 @@ describe('PUT /api/plans/:planId', () => {
       payload: { title: 'Changed' },
     })
 
-    expect(res.statusCode).toBe(404)
-    expect(mockPlanUpdate).not.toHaveBeenCalled()
+    expect(res.statusCode).toBe(200)
+    expect(mockFetchPlan).toHaveBeenCalledWith('alice', 'plan-1')
+    expect(mockUpsertPlan).toHaveBeenCalledWith('alice', expect.objectContaining({
+      id: 'plan-1',
+      title: 'Changed',
+    }))
   })
 })
 
@@ -193,7 +146,7 @@ describe('milestones and tasks', () => {
       payload: { title: 'MVP' },
     })
     expect(milestoneRes.statusCode).toBe(201)
-    expect(mockMilestoneCreate).toHaveBeenCalled()
+    expect(mockUpsertPlan).toHaveBeenCalled()
 
     const taskRes = await app.inject({
       method: 'POST',
@@ -202,10 +155,10 @@ describe('milestones and tasks', () => {
       payload: { title: 'Build list' },
     })
     expect(taskRes.statusCode).toBe(201)
-    expect(mockTaskCreate).toHaveBeenCalled()
+    expect(mockUpsertPlan).toHaveBeenCalled()
   })
 
-  it('deletes owned task', async () => {
+  it('deletes owned task by rewriting the durable plan', async () => {
     const app = await buildApp()
     const res = await app.inject({
       method: 'DELETE',
@@ -213,6 +166,9 @@ describe('milestones and tasks', () => {
       headers: { 'x-user-id': 'alice' },
     })
     expect(res.statusCode).toBe(204)
-    expect(mockTaskDelete).toHaveBeenCalledWith({ where: { id: 'task-1' } })
+    expect(mockUpsertPlan).toHaveBeenCalledWith('alice', expect.objectContaining({
+      id: 'plan-1',
+      milestones: [expect.objectContaining({ tasks: [] })],
+    }))
   })
 })

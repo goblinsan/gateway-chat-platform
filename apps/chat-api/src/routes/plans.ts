@@ -1,29 +1,38 @@
 import { randomUUID } from 'node:crypto'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type {
+  CreatePlanMilestoneRequest,
+  CreatePlanRequest,
+  CreatePlanTaskRequest,
   PlanGoal,
   PlanMetric,
   PlanMilestone,
   PlanStatus,
   PlanTask,
-  CreatePlanRequest,
-  UpdatePlanRequest,
-  CreatePlanMilestoneRequest,
   UpdatePlanMilestoneRequest,
-  CreatePlanTaskRequest,
+  UpdatePlanRequest,
   UpdatePlanTaskRequest,
 } from '@gateway/shared'
-import { getPrismaClient } from '../services/db'
+import {
+  AgentServiceError,
+  type AgentServicePlan,
+  type AgentServicePlanMilestone,
+  type AgentServicePlanTask,
+  deletePlanInAgentService,
+  fetchPlanFromAgentService,
+  fetchPlansFromAgentService,
+  upsertPlanInAgentService,
+} from '../services/agentServiceClient'
 
 const STATUS_VALUES: PlanStatus[] = ['on_track', 'at_risk', 'blocked', 'complete']
+
+function isStatus(value: unknown): value is PlanStatus {
+  return typeof value === 'string' && STATUS_VALUES.includes(value as PlanStatus)
+}
 
 function clampProgress(value: number | undefined): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
   return Math.max(0, Math.min(100, Math.round(value)))
-}
-
-function isStatus(value: unknown): value is PlanStatus {
-  return typeof value === 'string' && STATUS_VALUES.includes(value as PlanStatus)
 }
 
 function toStringArray(input: unknown): string[] {
@@ -34,167 +43,174 @@ function toStringArray(input: unknown): string[] {
     .filter(Boolean)
 }
 
-function toMetrics(input: unknown): PlanMetric[] {
-  if (!Array.isArray(input)) return []
-  return input
-    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-    .map((item) => ({
-      label: typeof item.label === 'string' ? item.label.trim() : '',
-      value: typeof item.value === 'string' ? item.value.trim() : '',
+function toMetricsArray(input: Record<string, unknown> | undefined): PlanMetric[] {
+  if (!input) return []
+  return Object.entries(input)
+    .map(([label, value]) => ({
+      label: label.trim(),
+      value: typeof value === 'string' ? value.trim() : JSON.stringify(value),
     }))
-    .filter((item) => item.label.length > 0 && item.value.length > 0)
+    .filter((metric) => metric.label.length > 0 && metric.value.length > 0)
 }
 
-function parseDate(input: unknown): Date | null | undefined {
-  if (input === undefined) return undefined
-  if (input === null || input === '') return null
-  if (typeof input !== 'string') return undefined
-  const date = new Date(input)
-  if (Number.isNaN(date.getTime())) return undefined
-  return date
+function toMetricsObject(input: PlanMetric[] | undefined): Record<string, unknown> {
+  const metrics: Record<string, unknown> = {}
+  for (const metric of input ?? []) {
+    const label = metric.label.trim()
+    const value = metric.value.trim()
+    if (!label || !value) continue
+    metrics[label] = value
+  }
+  return metrics
 }
 
-function parseJsonString<T>(input: string | null): T {
-  if (!input) return [] as T
-  try {
-    return JSON.parse(input) as T
-  } catch {
-    return [] as T
+function planStatusFromStore(status: string): PlanStatus {
+  switch (status.trim().toLowerCase()) {
+    case 'done':
+    case 'complete':
+      return 'complete'
+    case 'blocked':
+      return 'blocked'
+    case 'paused':
+    case 'at_risk':
+      return 'at_risk'
+    default:
+      return 'on_track'
   }
 }
 
-function toTaskModel(task: {
-  id: string
-  milestoneId: string
-  title: string
-  notes: string | null
-  status: string
-  progressPercent: number
-  orderIndex: number
-  createdAt: Date
-  updatedAt: Date
-}): PlanTask {
+function storeStatusFromPlan(status: PlanStatus | undefined, fallback = 'active'): string {
+  switch (status) {
+    case 'complete':
+      return 'done'
+    case 'blocked':
+      return 'blocked'
+    case 'at_risk':
+      return 'paused'
+    case 'on_track':
+      return 'active'
+    default:
+      return fallback
+  }
+}
+
+function taskProgressFromStore(task: AgentServicePlanTask): number {
+  if (planStatusFromStore(task.status) === 'complete') return 100
+  return 0
+}
+
+function milestoneProgressFromStore(milestone: AgentServicePlanMilestone): number {
+  if (milestone.tasks.length > 0) {
+    const completed = milestone.tasks.filter((task) => planStatusFromStore(task.status) === 'complete').length
+    return Math.round((completed / milestone.tasks.length) * 100)
+  }
+  if (planStatusFromStore(milestone.status) === 'complete') return 100
+  return 0
+}
+
+function toTaskModel(task: AgentServicePlanTask, milestoneId: string, orderIndex: number, updatedAt: string): PlanTask {
   return {
     id: task.id,
-    milestoneId: task.milestoneId,
+    milestoneId,
     title: task.title,
-    notes: task.notes ?? undefined,
-    status: isStatus(task.status) ? task.status : 'on_track',
-    progressPercent: clampProgress(task.progressPercent) ?? 0,
-    orderIndex: task.orderIndex,
-    createdAt: task.createdAt.toISOString(),
-    updatedAt: task.updatedAt.toISOString(),
+    notes: task.notes || undefined,
+    status: planStatusFromStore(task.status),
+    progressPercent: taskProgressFromStore(task),
+    orderIndex,
+    createdAt: updatedAt,
+    updatedAt,
   }
 }
 
-function toMilestoneModel(milestone: {
-  id: string
-  planId: string
-  title: string
-  notes: string | null
-  status: string
-  progressPercent: number
-  orderIndex: number
-  createdAt: Date
-  updatedAt: Date
-  tasks?: Array<{
-    id: string
-    milestoneId: string
-    title: string
-    notes: string | null
-    status: string
-    progressPercent: number
-    orderIndex: number
-    createdAt: Date
-    updatedAt: Date
-  }>
-}): PlanMilestone {
+function toMilestoneModel(
+  milestone: AgentServicePlanMilestone,
+  planId: string,
+  orderIndex: number,
+  updatedAt: string,
+): PlanMilestone {
   return {
     id: milestone.id,
-    planId: milestone.planId,
+    planId,
     title: milestone.title,
-    notes: milestone.notes ?? undefined,
-    status: isStatus(milestone.status) ? milestone.status : 'on_track',
-    progressPercent: clampProgress(milestone.progressPercent) ?? 0,
-    orderIndex: milestone.orderIndex,
-    createdAt: milestone.createdAt.toISOString(),
-    updatedAt: milestone.updatedAt.toISOString(),
-    tasks: (milestone.tasks ?? []).map(toTaskModel),
+    notes: milestone.summary || undefined,
+    status: planStatusFromStore(milestone.status),
+    progressPercent: milestoneProgressFromStore(milestone),
+    orderIndex,
+    createdAt: updatedAt,
+    updatedAt,
+    tasks: (milestone.tasks ?? []).map((task, taskIndex) => toTaskModel(task, milestone.id, taskIndex, updatedAt)),
   }
 }
 
-function toPlanModel(plan: {
-  id: string
-  userId: string
-  title: string
-  vision: string | null
-  status: string
-  progressPercent: number
-  category: string | null
-  reviewCadence: string | null
-  nextReviewAt: Date | null
-  tagsJson: string | null
-  sourceSystemsJson: string | null
-  metricsJson: string | null
-  createdAt: Date
-  updatedAt: Date
-  milestones?: Array<{
-    id: string
-    planId: string
-    title: string
-    notes: string | null
-    status: string
-    progressPercent: number
-    orderIndex: number
-    createdAt: Date
-    updatedAt: Date
-    tasks?: Array<{
-      id: string
-      milestoneId: string
-      title: string
-      notes: string | null
-      status: string
-      progressPercent: number
-      orderIndex: number
-      createdAt: Date
-      updatedAt: Date
-    }>
-  }>
-}): PlanGoal {
+function toPlanModel(plan: AgentServicePlan): PlanGoal {
+  const updatedAt = plan.updated_at ?? new Date().toISOString()
   return {
     id: plan.id,
-    userId: plan.userId,
+    userId: plan.user_id,
     title: plan.title,
-    vision: plan.vision ?? undefined,
-    status: isStatus(plan.status) ? plan.status : 'on_track',
-    progressPercent: clampProgress(plan.progressPercent) ?? 0,
-    category: plan.category ?? undefined,
-    reviewCadence: plan.reviewCadence ?? undefined,
-    nextReviewAt: plan.nextReviewAt?.toISOString(),
-    tags: toStringArray(parseJsonString<unknown[]>(plan.tagsJson)),
-    sourceSystems: toStringArray(parseJsonString<unknown[]>(plan.sourceSystemsJson)),
-    metrics: toMetrics(parseJsonString<unknown[]>(plan.metricsJson)),
-    createdAt: plan.createdAt.toISOString(),
-    updatedAt: plan.updatedAt.toISOString(),
-    milestones: (plan.milestones ?? []).map(toMilestoneModel),
+    vision: plan.vision || undefined,
+    status: planStatusFromStore(plan.status),
+    progressPercent: clampProgress(plan.progress?.percent_complete) ?? 0,
+    category: plan.category || undefined,
+    reviewCadence: plan.review_cadence || undefined,
+    nextReviewAt: plan.progress?.next_review_at ?? undefined,
+    tags: toStringArray(plan.tags),
+    sourceSystems: toStringArray(plan.data_sources),
+    metrics: toMetricsArray(plan.metrics),
+    createdAt: plan.created_at ?? updatedAt,
+    updatedAt,
+    milestones: (plan.milestones ?? []).map((milestone, milestoneIndex) => (
+      toMilestoneModel(milestone, plan.id, milestoneIndex, updatedAt)
+    )),
   }
+}
+
+function clonePlan(plan: AgentServicePlan): AgentServicePlan {
+  return {
+    ...plan,
+    tags: [...(plan.tags ?? [])],
+    data_sources: [...(plan.data_sources ?? [])],
+    connectors: [...(plan.connectors ?? [])],
+    metrics: { ...(plan.metrics ?? {}) },
+    milestones: (plan.milestones ?? []).map((milestone) => ({
+      ...milestone,
+      tasks: (milestone.tasks ?? []).map((task) => ({ ...task })),
+    })),
+    steps: [...(plan.steps ?? [])],
+  }
+}
+
+async function getOwnedPlan(userId: string, planId: string): Promise<AgentServicePlan> {
+  const plan = await fetchPlanFromAgentService(userId, planId)
+  return clonePlan(plan)
+}
+
+async function persistPlan(userId: string, plan: AgentServicePlan): Promise<AgentServicePlan> {
+  return upsertPlanInAgentService(userId, {
+    id: plan.id,
+    title: plan.title,
+    status: plan.status,
+    vision: plan.vision,
+    target: plan.target,
+    category: plan.category,
+    tags: plan.tags,
+    data_sources: plan.data_sources,
+    review_cadence: plan.review_cadence,
+    summary: plan.summary,
+    metrics: plan.metrics,
+    milestones: plan.milestones ?? [],
+    steps: plan.steps ?? [],
+  })
 }
 
 export default async function planRoutes(app: FastifyInstance) {
-  const prisma = getPrismaClient()
-
   app.get('/plans', async (req, reply) => {
-    const plans = await prisma.plan.findMany({
-      where: { userId: req.userId },
-      include: {
-        milestones: {
-          orderBy: { orderIndex: 'asc' },
-          include: { tasks: { orderBy: { orderIndex: 'asc' } } },
-        },
-      },
-      orderBy: { updatedAt: 'desc' },
-    })
-    return reply.send({ plans: plans.map(toPlanModel) })
+    try {
+      const plans = await fetchPlansFromAgentService(req.userId)
+      return reply.send({ plans: plans.map(toPlanModel) })
+    } catch (err) {
+      return sendAgentServiceError(reply, req, err, 'list plans')
+    }
   })
 
   app.post<{ Body: CreatePlanRequest }>(
@@ -231,29 +247,23 @@ export default async function planRoutes(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const parsedDate = parseDate(req.body.nextReviewAt)
-      if (req.body.nextReviewAt !== undefined && parsedDate === undefined) {
-        return reply.status(400).send({ error: 'Invalid nextReviewAt timestamp' })
-      }
-
-      const row = await prisma.plan.create({
-        data: {
-          id: randomUUID(),
-          userId: req.userId,
+      try {
+        const plan = await upsertPlanInAgentService(req.userId, {
           title: req.body.title.trim(),
-          vision: req.body.vision?.trim() || null,
-          status: isStatus(req.body.status) ? req.body.status : 'on_track',
-          progressPercent: clampProgress(req.body.progressPercent) ?? 0,
-          category: req.body.category?.trim() || null,
-          reviewCadence: req.body.reviewCadence?.trim() || null,
-          nextReviewAt: parsedDate ?? null,
-          tagsJson: JSON.stringify(toStringArray(req.body.tags)),
-          sourceSystemsJson: JSON.stringify(toStringArray(req.body.sourceSystems)),
-          metricsJson: JSON.stringify(toMetrics(req.body.metrics)),
-        },
-        include: { milestones: { include: { tasks: true }, orderBy: { orderIndex: 'asc' } } },
-      })
-      return reply.status(201).send({ plan: toPlanModel(row) })
+          status: storeStatusFromPlan(req.body.status, 'active'),
+          vision: req.body.vision?.trim() || '',
+          category: req.body.category?.trim() || '',
+          tags: toStringArray(req.body.tags),
+          data_sources: toStringArray(req.body.sourceSystems),
+          review_cadence: req.body.reviewCadence?.trim() || '',
+          metrics: toMetricsObject(req.body.metrics),
+          milestones: [],
+          steps: [],
+        })
+        return reply.status(201).send({ plan: toPlanModel(plan) })
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'create plan')
+      }
     },
   )
 
@@ -290,54 +300,31 @@ export default async function planRoutes(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const existing = await prisma.plan.findFirst({
-        where: { id: req.params.planId, userId: req.userId },
-      })
-      if (!existing) {
-        return reply.status(404).send({ error: 'Plan not found' })
+      try {
+        const plan = await getOwnedPlan(req.userId, req.params.planId)
+        if (req.body.title !== undefined) plan.title = req.body.title.trim()
+        if (req.body.vision !== undefined) plan.vision = req.body.vision?.trim() || ''
+        if (req.body.status !== undefined) plan.status = storeStatusFromPlan(req.body.status, plan.status || 'active')
+        if (req.body.category !== undefined) plan.category = req.body.category?.trim() || ''
+        if (req.body.reviewCadence !== undefined) plan.review_cadence = req.body.reviewCadence?.trim() || ''
+        if (req.body.tags !== undefined) plan.tags = toStringArray(req.body.tags)
+        if (req.body.sourceSystems !== undefined) plan.data_sources = toStringArray(req.body.sourceSystems)
+        if (req.body.metrics !== undefined) plan.metrics = toMetricsObject(req.body.metrics)
+        const updated = await persistPlan(req.userId, plan)
+        return reply.send({ plan: toPlanModel(updated) })
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'update plan')
       }
-
-      const parsedDate = parseDate(req.body.nextReviewAt)
-      if (req.body.nextReviewAt !== undefined && parsedDate === undefined) {
-        return reply.status(400).send({ error: 'Invalid nextReviewAt timestamp' })
-      }
-
-      const row = await prisma.plan.update({
-        where: { id: req.params.planId },
-        data: {
-          ...(req.body.title !== undefined && { title: req.body.title.trim() }),
-          ...(req.body.vision !== undefined && { vision: req.body.vision?.trim() || null }),
-          ...(req.body.status !== undefined && { status: isStatus(req.body.status) ? req.body.status : existing.status }),
-          ...(req.body.progressPercent !== undefined && { progressPercent: clampProgress(req.body.progressPercent) ?? existing.progressPercent }),
-          ...(req.body.category !== undefined && { category: req.body.category?.trim() || null }),
-          ...(req.body.reviewCadence !== undefined && { reviewCadence: req.body.reviewCadence?.trim() || null }),
-          ...(req.body.nextReviewAt !== undefined && { nextReviewAt: parsedDate ?? null }),
-          ...(req.body.tags !== undefined && { tagsJson: JSON.stringify(toStringArray(req.body.tags)) }),
-          ...(req.body.sourceSystems !== undefined && { sourceSystemsJson: JSON.stringify(toStringArray(req.body.sourceSystems)) }),
-          ...(req.body.metrics !== undefined && { metricsJson: JSON.stringify(toMetrics(req.body.metrics)) }),
-          updatedAt: new Date(),
-        },
-        include: {
-          milestones: {
-            orderBy: { orderIndex: 'asc' },
-            include: { tasks: { orderBy: { orderIndex: 'asc' } } },
-          },
-        },
-      })
-      return reply.send({ plan: toPlanModel(row) })
     },
   )
 
   app.delete<{ Params: { planId: string } }>('/plans/:planId', async (req, reply) => {
-    const existing = await prisma.plan.findFirst({
-      where: { id: req.params.planId, userId: req.userId },
-      select: { id: true },
-    })
-    if (!existing) {
-      return reply.status(404).send({ error: 'Plan not found' })
+    try {
+      await deletePlanInAgentService(req.userId, req.params.planId)
+      return reply.status(204).send()
+    } catch (err) {
+      return sendAgentServiceError(reply, req, err, 'delete plan')
     }
-    await prisma.plan.delete({ where: { id: req.params.planId } })
-    return reply.status(204).send()
   })
 
   app.post<{ Params: { planId: string }; Body: CreatePlanMilestoneRequest }>(
@@ -358,73 +345,78 @@ export default async function planRoutes(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const plan = await prisma.plan.findFirst({
-        where: { id: req.params.planId, userId: req.userId },
-      })
-      if (!plan) {
-        return reply.status(404).send({ error: 'Plan not found' })
-      }
-      const existingCount = await prisma.planMilestone.count({ where: { planId: plan.id } })
-      const row = await prisma.planMilestone.create({
-        data: {
+      try {
+        const plan = await getOwnedPlan(req.userId, req.params.planId)
+        const milestone: AgentServicePlanMilestone = {
           id: randomUUID(),
-          planId: plan.id,
           title: req.body.title.trim(),
-          notes: req.body.notes?.trim() || null,
-          status: isStatus(req.body.status) ? req.body.status : 'on_track',
-          progressPercent: clampProgress(req.body.progressPercent) ?? 0,
-          orderIndex: req.body.orderIndex ?? existingCount,
-        },
-        include: { tasks: { orderBy: { orderIndex: 'asc' } } },
-      })
-      return reply.status(201).send({ milestone: toMilestoneModel(row) })
+          status: storeStatusFromPlan(req.body.status, 'active'),
+          summary: req.body.notes?.trim() || '',
+          tasks: [],
+        }
+        const milestones = plan.milestones ?? []
+        const insertAt = Math.min(Math.max(req.body.orderIndex ?? milestones.length, 0), milestones.length)
+        milestones.splice(insertAt, 0, milestone)
+        plan.milestones = milestones
+        const updated = await persistPlan(req.userId, plan)
+        const created = updated.milestones?.find((item) => item.id === milestone.id)
+        return reply.status(201).send({
+          milestone: toMilestoneModel(created ?? milestone, plan.id, insertAt, updated.updated_at ?? new Date().toISOString()),
+        })
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'create milestone')
+      }
     },
   )
 
   app.put<{ Params: { planId: string; milestoneId: string }; Body: UpdatePlanMilestoneRequest }>(
     '/plans/:planId/milestones/:milestoneId',
     async (req, reply) => {
-      const milestone = await prisma.planMilestone.findFirst({
-        where: {
-          id: req.params.milestoneId,
-          planId: req.params.planId,
-          plan: { userId: req.userId },
-        },
-      })
-      if (!milestone) {
-        return reply.status(404).send({ error: 'Milestone not found' })
+      try {
+        const plan = await getOwnedPlan(req.userId, req.params.planId)
+        const milestones = plan.milestones ?? []
+        const milestoneIndex = milestones.findIndex((item) => item.id === req.params.milestoneId)
+        if (milestoneIndex < 0) {
+          return reply.status(404).send({ error: 'Milestone not found' })
+        }
+        const milestone = milestones[milestoneIndex]
+        if (req.body.title !== undefined) milestone.title = req.body.title.trim()
+        if (req.body.notes !== undefined) milestone.summary = req.body.notes?.trim() || ''
+        if (req.body.status !== undefined) milestone.status = storeStatusFromPlan(req.body.status, milestone.status || 'active')
+        if (req.body.orderIndex !== undefined) {
+          milestones.splice(milestoneIndex, 1)
+          const insertAt = Math.min(Math.max(req.body.orderIndex, 0), milestones.length)
+          milestones.splice(insertAt, 0, milestone)
+        }
+        const updated = await persistPlan(req.userId, plan)
+        const updatedMilestones = updated.milestones ?? []
+        const updatedIndex = updatedMilestones.findIndex((item) => item.id === req.params.milestoneId)
+        const saved = updatedIndex >= 0 ? updatedMilestones[updatedIndex] : milestone
+        return reply.send({
+          milestone: toMilestoneModel(saved, plan.id, Math.max(updatedIndex, 0), updated.updated_at ?? new Date().toISOString()),
+        })
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'update milestone')
       }
-      const row = await prisma.planMilestone.update({
-        where: { id: milestone.id },
-        data: {
-          ...(req.body.title !== undefined && { title: req.body.title.trim() }),
-          ...(req.body.notes !== undefined && { notes: req.body.notes?.trim() || null }),
-          ...(req.body.status !== undefined && { status: isStatus(req.body.status) ? req.body.status : milestone.status }),
-          ...(req.body.progressPercent !== undefined && { progressPercent: clampProgress(req.body.progressPercent) ?? milestone.progressPercent }),
-          ...(req.body.orderIndex !== undefined && { orderIndex: req.body.orderIndex }),
-          updatedAt: new Date(),
-        },
-        include: { tasks: { orderBy: { orderIndex: 'asc' } } },
-      })
-      return reply.send({ milestone: toMilestoneModel(row) })
     },
   )
 
   app.delete<{ Params: { planId: string; milestoneId: string } }>(
     '/plans/:planId/milestones/:milestoneId',
     async (req, reply) => {
-      const milestone = await prisma.planMilestone.findFirst({
-        where: {
-          id: req.params.milestoneId,
-          planId: req.params.planId,
-          plan: { userId: req.userId },
-        },
-      })
-      if (!milestone) {
-        return reply.status(404).send({ error: 'Milestone not found' })
+      try {
+        const plan = await getOwnedPlan(req.userId, req.params.planId)
+        const milestones = plan.milestones ?? []
+        const remaining = milestones.filter((item) => item.id !== req.params.milestoneId)
+        if (remaining.length === milestones.length) {
+          return reply.status(404).send({ error: 'Milestone not found' })
+        }
+        plan.milestones = remaining
+        await persistPlan(req.userId, plan)
+        return reply.status(204).send()
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'delete milestone')
       }
-      await prisma.planMilestone.delete({ where: { id: milestone.id } })
-      return reply.status(204).send()
     },
   )
 
@@ -446,81 +438,99 @@ export default async function planRoutes(app: FastifyInstance) {
       },
     },
     async (req, reply) => {
-      const milestone = await prisma.planMilestone.findFirst({
-        where: {
-          id: req.params.milestoneId,
-          planId: req.params.planId,
-          plan: { userId: req.userId },
-        },
-      })
-      if (!milestone) {
-        return reply.status(404).send({ error: 'Milestone not found' })
-      }
-      const existingCount = await prisma.planTask.count({ where: { milestoneId: milestone.id } })
-      const row = await prisma.planTask.create({
-        data: {
+      try {
+        const plan = await getOwnedPlan(req.userId, req.params.planId)
+        const milestone = (plan.milestones ?? []).find((item) => item.id === req.params.milestoneId)
+        if (!milestone) {
+          return reply.status(404).send({ error: 'Milestone not found' })
+        }
+        const task: AgentServicePlanTask = {
           id: randomUUID(),
-          milestoneId: milestone.id,
           title: req.body.title.trim(),
-          notes: req.body.notes?.trim() || null,
-          status: isStatus(req.body.status) ? req.body.status : 'on_track',
-          progressPercent: clampProgress(req.body.progressPercent) ?? 0,
-          orderIndex: req.body.orderIndex ?? existingCount,
-        },
-      })
-      return reply.status(201).send({ task: toTaskModel(row) })
+          status: storeStatusFromPlan(req.body.status, 'todo'),
+          notes: req.body.notes?.trim() || '',
+        }
+        const tasks = milestone.tasks ?? []
+        const insertAt = Math.min(Math.max(req.body.orderIndex ?? tasks.length, 0), tasks.length)
+        tasks.splice(insertAt, 0, task)
+        milestone.tasks = tasks
+        const updated = await persistPlan(req.userId, plan)
+        const savedMilestone = (updated.milestones ?? []).find((item) => item.id === req.params.milestoneId) ?? milestone
+        const savedTask = (savedMilestone.tasks ?? []).find((item) => item.id === task.id) ?? task
+        return reply.status(201).send({
+          task: toTaskModel(savedTask, req.params.milestoneId, insertAt, updated.updated_at ?? new Date().toISOString()),
+        })
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'create task')
+      }
     },
   )
 
   app.put<{ Params: { planId: string; milestoneId: string; taskId: string }; Body: UpdatePlanTaskRequest }>(
     '/plans/:planId/milestones/:milestoneId/tasks/:taskId',
     async (req, reply) => {
-      const task = await prisma.planTask.findFirst({
-        where: {
-          id: req.params.taskId,
-          milestoneId: req.params.milestoneId,
-          milestone: {
-            planId: req.params.planId,
-            plan: { userId: req.userId },
-          },
-        },
-      })
-      if (!task) {
-        return reply.status(404).send({ error: 'Task not found' })
+      try {
+        const plan = await getOwnedPlan(req.userId, req.params.planId)
+        const milestone = (plan.milestones ?? []).find((item) => item.id === req.params.milestoneId)
+        if (!milestone) {
+          return reply.status(404).send({ error: 'Milestone not found' })
+        }
+        const tasks = milestone.tasks ?? []
+        const taskIndex = tasks.findIndex((item) => item.id === req.params.taskId)
+        if (taskIndex < 0) {
+          return reply.status(404).send({ error: 'Task not found' })
+        }
+        const task = tasks[taskIndex]
+        if (req.body.title !== undefined) task.title = req.body.title.trim()
+        if (req.body.notes !== undefined) task.notes = req.body.notes?.trim() || ''
+        if (req.body.status !== undefined) task.status = storeStatusFromPlan(req.body.status, task.status || 'todo')
+        if (req.body.orderIndex !== undefined) {
+          tasks.splice(taskIndex, 1)
+          const insertAt = Math.min(Math.max(req.body.orderIndex, 0), tasks.length)
+          tasks.splice(insertAt, 0, task)
+        }
+        const updated = await persistPlan(req.userId, plan)
+        const savedMilestone = (updated.milestones ?? []).find((item) => item.id === req.params.milestoneId) ?? milestone
+        const savedIndex = (savedMilestone.tasks ?? []).findIndex((item) => item.id === req.params.taskId)
+        const savedTask = savedIndex >= 0 ? savedMilestone.tasks[savedIndex] : task
+        return reply.send({
+          task: toTaskModel(savedTask, req.params.milestoneId, Math.max(savedIndex, 0), updated.updated_at ?? new Date().toISOString()),
+        })
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'update task')
       }
-      const row = await prisma.planTask.update({
-        where: { id: task.id },
-        data: {
-          ...(req.body.title !== undefined && { title: req.body.title.trim() }),
-          ...(req.body.notes !== undefined && { notes: req.body.notes?.trim() || null }),
-          ...(req.body.status !== undefined && { status: isStatus(req.body.status) ? req.body.status : task.status }),
-          ...(req.body.progressPercent !== undefined && { progressPercent: clampProgress(req.body.progressPercent) ?? task.progressPercent }),
-          ...(req.body.orderIndex !== undefined && { orderIndex: req.body.orderIndex }),
-          updatedAt: new Date(),
-        },
-      })
-      return reply.send({ task: toTaskModel(row) })
     },
   )
 
   app.delete<{ Params: { planId: string; milestoneId: string; taskId: string } }>(
     '/plans/:planId/milestones/:milestoneId/tasks/:taskId',
     async (req, reply) => {
-      const task = await prisma.planTask.findFirst({
-        where: {
-          id: req.params.taskId,
-          milestoneId: req.params.milestoneId,
-          milestone: {
-            planId: req.params.planId,
-            plan: { userId: req.userId },
-          },
-        },
-      })
-      if (!task) {
-        return reply.status(404).send({ error: 'Task not found' })
+      try {
+        const plan = await getOwnedPlan(req.userId, req.params.planId)
+        const milestone = (plan.milestones ?? []).find((item) => item.id === req.params.milestoneId)
+        if (!milestone) {
+          return reply.status(404).send({ error: 'Milestone not found' })
+        }
+        const tasks = milestone.tasks ?? []
+        const remaining = tasks.filter((item) => item.id !== req.params.taskId)
+        if (remaining.length === tasks.length) {
+          return reply.status(404).send({ error: 'Task not found' })
+        }
+        milestone.tasks = remaining
+        await persistPlan(req.userId, plan)
+        return reply.status(204).send()
+      } catch (err) {
+        return sendAgentServiceError(reply, req, err, 'delete task')
       }
-      await prisma.planTask.delete({ where: { id: task.id } })
-      return reply.status(204).send()
     },
   )
+}
+
+function sendAgentServiceError(reply: FastifyReply, req: FastifyRequest, err: unknown, op: string) {
+  if (err instanceof AgentServiceError && err.statusCode === 404) {
+    return reply.status(404).send({ error: 'Plan not found' })
+  }
+  req.log.error({ err, op }, 'plan operation failed')
+  const message = err instanceof Error ? err.message : String(err)
+  return reply.status(502).send({ error: message })
 }
