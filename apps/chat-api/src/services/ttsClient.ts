@@ -15,7 +15,7 @@ interface TtsHealthResult {
 }
 
 interface TtsVoice {
-  id: string
+  id?: string
   name?: string
   [key: string]: unknown
 }
@@ -47,6 +47,13 @@ interface TtsSynthesizeOptions {
 interface TtsSynthesizeResult {
   contentType: string
   audioBuffer: Buffer
+}
+
+function voiceIdentifier(voice: TtsVoice): string | undefined {
+  const id = typeof voice.id === 'string' ? voice.id.trim() : ''
+  if (id) return id
+  const name = typeof voice.name === 'string' ? voice.name.trim() : ''
+  return name || undefined
 }
 
 function buildUrl(path: string): string {
@@ -110,15 +117,34 @@ export async function synthesize(opts: TtsSynthesizeOptions): Promise<TtsSynthes
   }
 
   const url = buildUrl(env.TTS_GENERATE_PATH)
-  const res = await fetchWithTimeout(url, {
+  const requestedVoice = opts.voice?.trim()
+  const defaultVoice = env.TTS_DEFAULT_VOICE.trim()
+  const initialVoice = requestedVoice || defaultVoice || undefined
+  const synthesizeWithVoice = (voice: string | undefined) => fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text: opts.text,
-      voice: opts.voice ?? env.TTS_DEFAULT_VOICE,
+      ...(voice ? { voice } : {}),
       format: opts.format ?? 'wav',
     }),
   })
+
+  let res = await synthesizeWithVoice(initialVoice)
+
+  if (!res.ok && !requestedVoice && res.status === 404) {
+    const body = await res.text().catch(() => '')
+    if (/voice/i.test(body) && /not found/i.test(body)) {
+      const fallbackVoice = voiceIdentifier((await listVoices()).voices[0] ?? {})
+      if (fallbackVoice && fallbackVoice !== initialVoice) {
+        res = await synthesizeWithVoice(fallbackVoice)
+      } else {
+        throw new Error(`TTS synthesis failed: ${res.status} ${body.slice(0, 200)}`)
+      }
+    } else {
+      throw new Error(`TTS synthesis failed: ${res.status} ${body.slice(0, 200)}`)
+    }
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => '')

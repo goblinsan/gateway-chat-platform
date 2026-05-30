@@ -27,6 +27,7 @@ import ttsRoutes from '../routes/tts'
 beforeEach(() => {
   mockFetch.mockReset()
   mockEnv.TTS_ENABLED = true
+  mockEnv.TTS_DEFAULT_VOICE = 'assistant_v1'
 })
 
 describe('GET /api/tts/health', () => {
@@ -139,6 +140,43 @@ describe('POST /api/tts', () => {
 
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toContain('audio/wav')
+  })
+
+  it('retries with the first available voice when the default voice is stale', async () => {
+    const audioData = Buffer.from('RIFF fallback wav data')
+    mockEnv.TTS_DEFAULT_VOICE = 'missing_voice'
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => `{"detail":"Voice 'missing_voice' not found"}`,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ voices: [{ id: 'alan_20260525_143321_e6fbf8', name: 'Alan' }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: (k: string) => k === 'content-type' ? 'audio/wav' : null },
+        arrayBuffer: async () => audioData.buffer.slice(audioData.byteOffset, audioData.byteOffset + audioData.byteLength),
+      })
+
+    const app = Fastify()
+    await app.register(ttsRoutes, { prefix: '/api' })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/tts',
+      payload: { text: 'Hello world' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+    expect(JSON.parse(String(mockFetch.mock.calls[2][1]?.body))).toMatchObject({
+      voice: 'alan_20260525_143321_e6fbf8',
+    })
   })
 
   it('returns 409 when TTS is disabled', async () => {
