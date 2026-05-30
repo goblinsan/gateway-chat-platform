@@ -25,11 +25,9 @@ import notificationsRoutes from './routes/notifications'
 import schedulesRoutes from './routes/schedules'
 import devicesRoutes from './routes/devices'
 import planRoutes from './routes/plans'
+import profileRoutes from './routes/profile'
 import cfAccessPlugin from './plugins/cfAccess'
 import userIdentityPlugin from './plugins/userIdentity'
-import { getPrismaClient } from './services/db'
-import { scheduleRetentionCleanup } from './services/retention'
-import { initAgentRegistry } from './agents/registry'
 
 // Max request body size: 64 KB — prevents oversized prompt submissions (#59)
 const BODY_LIMIT = 64 * 1024
@@ -90,10 +88,6 @@ async function bootstrap() {
     }),
   })
 
-  // Initialize dynamic agent registry from DB (seeds defaults on first run)
-  const prisma = getPrismaClient()
-  await initAgentRegistry(prisma)
-
   // User identity resolution — sets req.userId for all routes (#85)
   await app.register(userIdentityPlugin)
 
@@ -118,6 +112,7 @@ async function bootstrap() {
   await app.register(schedulesRoutes, { prefix: '/api' })
   await app.register(devicesRoutes, { prefix: '/api' })
   await app.register(planRoutes, { prefix: '/api' })
+  await app.register(profileRoutes, { prefix: '/api' })
   await app.register(orchestrationRoutes, { prefix: '/api' })
   await app.register(mobileRoutes, { prefix: '/api' })
 
@@ -129,9 +124,6 @@ async function bootstrap() {
 
   // Root
   app.get('/', async () => ({ name: 'gateway-chat-api', version: env.BUILD_VERSION }))
-
-  // Start retention cleanup scheduler
-  scheduleRetentionCleanup(prisma, env.RETENTION_DAYS_CONVERSATIONS, env.RETENTION_DAYS_LOGS)
 
   await app.listen({ port: env.PORT, host: env.HOST })
 }

@@ -34,6 +34,8 @@ export interface MessageMeta {
   usedProvider?: string
   latencyMs?: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  completionTokensPerSecond?: number
+  reasoning?: string
   costClass?: string
   toolsAvailable?: string[]
   routingExplanation?: {

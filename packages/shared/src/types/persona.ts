@@ -1,3 +1,5 @@
+import type { PersonalContextConfig } from './agent'
+
 /**
  * A user-owned agent personality.
  * Distinct from operator-managed Agent configs — only the owning user can see and edit these.
@@ -18,6 +20,8 @@ export interface UserPersona {
   temperature?: number
   maxTokens?: number
   enableReasoning?: boolean
+  /** Controls access to the owner's private profile, memories, goals, and personal data. */
+  personalContext?: PersonalContextConfig
   enabled: boolean
   createdAt: string
   updatedAt: string
@@ -41,6 +45,7 @@ export interface CreatePersonaRequest {
   temperature?: number
   maxTokens?: number
   enableReasoning?: boolean
+  personalContext?: PersonalContextConfig
 }
 
 /** Request body for updating a persona (all fields optional) */

@@ -31,6 +31,22 @@ export interface ContextSource {
   description?: string
 }
 
+/** Controls whether an orchestrated agent receives the owner's private context. */
+export interface PersonalContextConfig {
+  /** Set false for entertainment/shared agents that should not see profile, memories, goals, or personal data. */
+  enabled?: boolean
+  /** Include structured profile facts such as preferences and timezone. */
+  profile?: boolean
+  /** Include durable non-profile memories and allow memory tools. */
+  memories?: boolean
+  /** Include goals/plans and allow plan tools. */
+  goals?: boolean
+  /** Include recent durable event summaries. */
+  events?: boolean
+  /** Include personal-data rollups and allow personal-data tools. */
+  personalData?: boolean
+}
+
 export interface AgentConfig {
   id: string
   name: string
@@ -47,6 +63,8 @@ export interface AgentConfig {
   maxTokens?: number
   /** Enable extended reasoning where the provider supports it */
   enableReasoning?: boolean
+  /** Public, non-secret TTS voice id preferred for this persona */
+  ttsVoiceId?: string
   featureFlags?: Record<string, boolean>
   /** Server-side routing policy — never sent to the browser */
   routingPolicy?: RoutingPolicy
@@ -54,6 +72,8 @@ export interface AgentConfig {
   endpointConfig?: ModelEndpointConfig
   /** Context and memory sources available to this agent */
   contextSources?: ContextSource[]
+  /** Controls access to the account owner's personal profile, memories, goals, and personal data. */
+  personalContext?: PersonalContextConfig
   /**
    * Controls whether this agent is executed via the direct provider registry or
    * routed through the internal agent-service orchestrator.

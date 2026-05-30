@@ -15,7 +15,6 @@ RUN pnpm install --frozen-lockfile
 COPY packages/shared ./packages/shared
 COPY apps/chat-api ./apps/chat-api
 
-RUN pnpm --filter @gateway/chat-api prisma:generate
 RUN pnpm --filter @gateway/chat-api build
 
 FROM node:20-bookworm-slim

@@ -32,6 +32,8 @@ interface ChatPageProps {
 
 type SSEEvent =
   | { type: 'token'; token: string }
+  | { type: 'reasoning'; text: string }
+  | { type: 'status'; message: string }
   | (AgentStreamDoneEvent & { type: 'done' })
   | { type: 'error'; error: string }
 
@@ -119,11 +121,12 @@ export default function ChatPage({
       messagesToSend: Array<{ role: 'user' | 'assistant'; content: string }>,
       modelOverride?: string,
     ): Promise<void> => {
-      const placeholder = onAddMessage(threadId, { role: 'assistant', content: '' })
+      const placeholder = onAddMessage(threadId, { role: 'assistant', content: 'Thinking…' })
       setStreamingMessageId(placeholder.id)
       setIsStreaming(true)
 
       let accumulated = ''
+  let accumulatedReasoning = ''
       let errorReceived = false
       try {
         const response = await fetch('/api/chat/stream', {
@@ -160,6 +163,19 @@ export default function ChatPage({
               if (event.type === 'token') {
                 accumulated += event.token
                 onUpdateLastAssistantMessage(threadId, accumulated)
+              } else if (event.type === 'reasoning') {
+                accumulatedReasoning += event.text
+                onUpdateLastAssistantMessage(threadId, accumulated || 'Thinking…', {
+                  reasoning: accumulatedReasoning,
+                })
+              } else if (event.type === 'status') {
+                if (!accumulated) {
+                  onUpdateLastAssistantMessage(
+                    threadId,
+                    event.message,
+                    accumulatedReasoning ? { reasoning: accumulatedReasoning } : undefined,
+                  )
+                }
               } else if (event.type === 'done') {
                 if (!accumulated && (event.status === 'approval_required' || event.status === 'paused')) {
                   accumulated = event.orchestrationState?.reason
@@ -174,6 +190,8 @@ export default function ChatPage({
                   usedProvider: event.usedProvider,
                   latencyMs: event.latencyMs,
                   usage: event.usage,
+                  completionTokensPerSecond: event.completionTokensPerSecond,
+                  ...(accumulatedReasoning ? { reasoning: accumulatedReasoning } : {}),
                   routingExplanation: event.routingExplanation,
                 })
               } else if (event.type === 'error') {

@@ -1,6 +1,30 @@
 import type { FastifyInstance } from 'fastify'
 import { getEnv } from '../config/env'
+import {
+  AgentServiceError,
+  ingestAppleHealthSummaryInAgentService,
+  ingestPersonalDataBatchInAgentService,
+} from '../services/agentServiceClient'
 import { checkProvider } from '../services/providerCheck'
+
+interface AppleHealthSummaryBody {
+  date?: string
+  timezone?: string
+  activity?: Record<string, unknown>
+  nutrition?: Record<string, unknown>
+}
+
+interface PersonalDataBatchBody {
+  source_system?: string
+  source_device?: string
+  source_app?: string
+  sync_started_at?: string
+  sync_completed_at?: string
+  schema_version?: string
+  normalization_version?: string
+  metadata_json?: Record<string, unknown>
+  records?: Array<Record<string, unknown>>
+}
 
 interface DependencyStatus {
   status: 'ok' | 'error' | 'unconfigured'
@@ -18,6 +42,54 @@ interface HealthResponse {
 }
 
 export default async function healthRoutes(app: FastifyInstance) {
+  app.post<{ Body: PersonalDataBatchBody }>('/personal-data/batches', async (req, reply) => {
+    const body = req.body ?? {}
+    if (!cleanString(body.source_system)) {
+      return reply.status(400).send({ error: 'source_system is required' })
+    }
+    if (!Array.isArray(body.records) || body.records.length === 0) {
+      return reply.status(400).send({ error: 'records are required' })
+    }
+    try {
+      const result = await ingestPersonalDataBatchInAgentService(req.userId, {
+        source_system: cleanString(body.source_system),
+        source_device: cleanString(body.source_device),
+        source_app: cleanString(body.source_app),
+        sync_started_at: cleanString(body.sync_started_at),
+        sync_completed_at: cleanString(body.sync_completed_at),
+        schema_version: cleanString(body.schema_version),
+        normalization_version: cleanString(body.normalization_version),
+        metadata_json: hasObjectMetrics(body.metadata_json) ? body.metadata_json : undefined,
+        records: body.records,
+      })
+      return reply.send(result)
+    } catch (err) {
+      req.log.error({ err }, 'personal data batch ingest failed')
+      const message = err instanceof AgentServiceError || err instanceof Error ? err.message : String(err)
+      return reply.status(502).send({ error: message })
+    }
+  })
+
+  app.post<{ Body: AppleHealthSummaryBody }>('/health/apple/summary', async (req, reply) => {
+    const body = req.body ?? {}
+    if (!hasObjectMetrics(body.activity) && !hasObjectMetrics(body.nutrition)) {
+      return reply.status(400).send({ error: 'activity or nutrition metrics are required' })
+    }
+    try {
+      const result = await ingestAppleHealthSummaryInAgentService(req.userId, {
+        date: cleanString(body.date),
+        timezone: cleanString(body.timezone),
+        activity: cleanMetrics(body.activity),
+        nutrition: cleanMetrics(body.nutrition),
+      })
+      return reply.send(result)
+    } catch (err) {
+      req.log.error({ err }, 'apple health summary ingest failed')
+      const message = err instanceof AgentServiceError || err instanceof Error ? err.message : String(err)
+      return reply.status(502).send({ error: message })
+    }
+  })
+
   app.get('/ready', async (_req, reply) => {
     return reply.status(200).send({ status: 'ready', uptime: process.uptime() })
   })
@@ -115,4 +187,27 @@ export default async function healthRoutes(app: FastifyInstance) {
 
     return reply.status(200).send(results)
   })
+}
+
+function hasObjectMetrics(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.keys(value).length > 0
+}
+
+function cleanMetrics(value: unknown): Record<string, unknown> | undefined {
+  if (!hasObjectMetrics(value)) return undefined
+  const out: Record<string, unknown> = {}
+  for (const [key, metricValue] of Object.entries(value)) {
+    const normalizedKey = key.trim()
+    if (!normalizedKey || metricValue === null || typeof metricValue === 'undefined') continue
+    if (typeof metricValue === 'number' && !Number.isFinite(metricValue)) continue
+    out[normalizedKey] = metricValue
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function cleanString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
 }

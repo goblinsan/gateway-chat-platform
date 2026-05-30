@@ -155,7 +155,7 @@ public final class GatewayAppViewModel: ObservableObject {
 
   /// Synthesize and play `text` using the currently selected voice.  Silently
   /// no-ops when TTS is disabled or the gateway is unreachable.
-  public func speak(text: String) async {
+  public func speak(text: String, voice: String? = nil) async {
     #if canImport(AVFoundation)
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, let baseURL = gatewayBaseURL else { return }
@@ -164,7 +164,7 @@ public final class GatewayAppViewModel: ObservableObject {
         baseURL: baseURL,
         token: gatewayToken,
         text: trimmed,
-        voice: selectedVoiceID
+        voice: voice ?? selectedVoiceID
       )
       ttsController.play(audio: result.audio, contentType: result.contentType)
     } catch {
@@ -1358,6 +1358,16 @@ struct ChatView: View {
     selectedAgentID ?? fallbackAgentID
   }
 
+  private var resolvedAgentVoiceID: String? {
+    guard let resolvedAgentID,
+          let voiceID = agents.first(where: { $0.id == resolvedAgentID })?.ttsVoiceId,
+          !voiceID.isEmpty
+    else {
+      return model.selectedVoiceID
+    }
+    return voiceID
+  }
+
   var body: some View {
     NavigationStack {
       VStack(spacing: 12) {
@@ -1428,8 +1438,12 @@ struct ChatView: View {
               ForEach(messages) { message in
                 ChatMessageBubble(
                   message: message,
+                  onToggleReasoning: {
+                    toggleReasoning(for: message.id)
+                  },
                   onSpeak: model.ttsEnabled ? { text in
-                    Task { await model.speak(text: text) }
+                    let voiceID = resolvedAgentVoiceID
+                    Task { await model.speak(text: text, voice: voiceID) }
                   } : nil
                 )
               }
@@ -1462,6 +1476,7 @@ struct ChatView: View {
             .gatewayTextInputAutocapitalizationSentences()
             .autocorrectionDisabled(false)
             .focused($isPromptFocused)
+            .disabled(isSending)
 
           #if canImport(Speech)
           if speechInputEnabled {
@@ -1496,9 +1511,7 @@ struct ChatView: View {
             }
           } else {
             Button {
-              streamingTask = Task {
-                await sendPrompt()
-              }
+              submitPrompt()
             } label: {
               Text("Send")
             }
@@ -1754,7 +1767,7 @@ struct ChatView: View {
     return normalized.contains("plan_ingest_text") || normalized.contains("<plan_document>")
   }
 
-  private func sendPrompt() async {
+  private func submitPrompt() {
     let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedPrompt.isEmpty else {
       errorMessage = GatewayChatError.emptyPrompt.localizedDescription
@@ -1773,20 +1786,12 @@ struct ChatView: View {
       return
     }
 
-    let userMessage = ChatMessageRow(role: .user, content: trimmedPrompt)
-    messages.append(userMessage)
-    prompt = ""
-    isPromptFocused = false
-    isSending = true
-    errorMessage = nil
-    importStatusMessage = nil
-    defer { isSending = false }
-
     if threadID == nil {
       threadID = UUID().uuidString
     }
 
-    let conversation = messages.map { message in
+    let userMessage = ChatMessageRow(role: .user, content: trimmedPrompt)
+    let conversation = (messages + [userMessage]).map { message in
       let role: String
       switch message.role {
       case .user:
@@ -1797,10 +1802,85 @@ struct ChatView: View {
       return GatewayConversationMessage(role: role, content: message.content)
     }
 
-    // Append a placeholder for the in-progress assistant reply so the user
-    // sees the bubble appear immediately and tokens stream into it.
     let placeholderID = UUID()
-    messages.append(ChatMessageRow(role: .assistant, content: "", id: placeholderID))
+
+    streamingTask?.cancel()
+    messages.append(userMessage)
+    prompt = ""
+    isPromptFocused = false
+    dismissKeyboard()
+    isSending = true
+    errorMessage = nil
+    importStatusMessage = nil
+    messages.append(ChatMessageRow(role: .assistant, content: "Sending…", id: placeholderID, isReasoningExpanded: true))
+
+    streamingTask = Task {
+      await sendPrompt(
+        trimmedPrompt: trimmedPrompt,
+        baseURL: baseURL,
+        resolvedAgentID: resolvedAgentID,
+        conversation: conversation,
+        placeholderID: placeholderID
+      )
+    }
+  }
+
+  private func dismissKeyboard() {
+    #if canImport(UIKit)
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    #endif
+  }
+
+  private func sendPrompt(
+    trimmedPrompt: String,
+    baseURL: URL,
+    resolvedAgentID: String,
+    conversation: [GatewayConversationMessage],
+    placeholderID: UUID
+  ) async {
+    let progressTask = Task { @MainActor in
+      let statuses = ["Waiting for the gateway…", "Model is working…", "Still working…"]
+      for status in statuses {
+        do {
+          try await Task.sleep(nanoseconds: 4_000_000_000)
+        } catch {
+          return
+        }
+        guard !Task.isCancelled else { return }
+        if let idx = messages.firstIndex(where: { $0.id == placeholderID }),
+           isTransientSendStatus(messages[idx].content) {
+          messages[idx].content = status
+        }
+      }
+    }
+    defer {
+      progressTask.cancel()
+      isSending = false
+      streamingTask = nil
+    }
+
+    var lastStreamRender = Date.distantPast
+    func renderAssistantReply(_ content: String, force: Bool = false) -> Bool {
+      let now = Date()
+      guard force || now.timeIntervalSince(lastStreamRender) >= 0.12 else { return false }
+      if let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
+        messages[idx].content = content
+      }
+      lastStreamRender = now
+      return true
+    }
+
+    var lastReasoningRender = Date.distantPast
+    func renderReasoning(_ content: String, force: Bool = false) -> Bool {
+      let now = Date()
+      guard force || now.timeIntervalSince(lastReasoningRender) >= 0.20 else { return false }
+      if let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
+        messages[idx].reasoning = content
+        messages[idx].isReasoningExpanded = true
+      }
+      lastReasoningRender = now
+      return true
+    }
 
     do {
       let stream = try await model.chatClient.streamPrompt(
@@ -1813,23 +1893,43 @@ struct ChatView: View {
       )
 
       var accumulated = ""
+      var accumulatedReasoning = ""
       for try await event in stream {
         switch event {
         case let .token(tok):
           accumulated += tok
-          if let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
-            messages[idx].content = accumulated
+          if renderAssistantReply(accumulated) {
+            await Task.yield()
           }
-        case let .done(_, returnedThreadID):
+        case let .reasoning(text):
+          accumulatedReasoning += text
+          if renderReasoning(accumulatedReasoning) {
+            await Task.yield()
+          }
+        case let .status(message):
+          if accumulated.isEmpty {
+            _ = renderAssistantReply(message, force: true)
+          }
+        case let .done(_, returnedThreadID, completionTokensPerSecond):
           if let tid = returnedThreadID {
             threadID = tid
           }
+          if let completionTokensPerSecond,
+             let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
+            messages[idx].completionTokensPerSecond = completionTokensPerSecond
+          }
+          _ = renderReasoning(accumulatedReasoning, force: true)
+          collapseReasoning(for: placeholderID)
         case let .error(msg):
           errorMessage = msg
         default:
           break
         }
       }
+
+      _ = renderAssistantReply(accumulated, force: true)
+      _ = renderReasoning(accumulatedReasoning, force: true)
+      collapseReasoning(for: placeholderID)
 
       // Remove the placeholder if nothing was accumulated (e.g. empty response).
       if accumulated.isEmpty {
@@ -1838,7 +1938,7 @@ struct ChatView: View {
     } catch is CancellationError {
       // User cancelled: retain partial content, remove empty placeholder.
       if let idx = messages.firstIndex(where: { $0.id == placeholderID }),
-         messages[idx].content.isEmpty {
+         messages[idx].content.isEmpty || isTransientSendStatus(messages[idx].content) {
         messages.remove(at: idx)
       }
     } catch {
@@ -1877,7 +1977,27 @@ struct ChatView: View {
     if autoSpeakEnabled, model.ttsEnabled,
        let last = messages.last, last.role == .assistant, !last.content.isEmpty {
       let spoken = last.content
-      Task { await model.speak(text: spoken) }
+      let voiceID = resolvedAgentVoiceID
+      Task { await model.speak(text: spoken, voice: voiceID) }
+    }
+  }
+
+  private func toggleReasoning(for messageID: UUID) {
+    guard let idx = messages.firstIndex(where: { $0.id == messageID }) else { return }
+    messages[idx].isReasoningExpanded.toggle()
+  }
+
+  private func collapseReasoning(for messageID: UUID) {
+    guard let idx = messages.firstIndex(where: { $0.id == messageID }) else { return }
+    messages[idx].isReasoningExpanded = false
+  }
+
+  private func isTransientSendStatus(_ content: String) -> Bool {
+    switch content.trimmingCharacters(in: .whitespacesAndNewlines) {
+    case "Sending…", "Thinking…", "Waiting for the gateway…", "Model is working…", "Still working…":
+      return true
+    default:
+      return false
     }
   }
 
@@ -2149,7 +2269,16 @@ struct ThreadListSheet: View {
 
 struct ChatMessageBubble: View {
   let message: ChatMessageRow
+  var onToggleReasoning: (() -> Void)? = nil
   var onSpeak: ((String) -> Void)? = nil
+
+  private var renderedContent: String {
+    guard message.role == .user else { return message.content }
+    let limit = 1_200
+    guard message.content.count > limit else { return message.content }
+    return String(message.content.prefix(limit))
+      + "\n\n…\n\nLong message collapsed for mobile rendering. The full text was sent to the gateway."
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -2177,11 +2306,50 @@ struct ChatMessageBubble: View {
         }
       }
 
-      Text(message.content)
+      Text(renderedContent)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(message.role == .user ? Color.blue.opacity(0.15) : Color.gray.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+
+      if message.role == .assistant,
+         let reasoning = message.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines),
+         !reasoning.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          Button {
+            onToggleReasoning?()
+          } label: {
+            HStack(spacing: 6) {
+              Image(systemName: message.isReasoningExpanded ? "chevron.down" : "chevron.right")
+                .font(.caption2.weight(.semibold))
+              Text("Reasoning")
+                .font(.caption.weight(.semibold))
+              Spacer(minLength: 0)
+            }
+            .foregroundStyle(.indigo)
+          }
+          .buttonStyle(.plain)
+
+          if message.isReasoningExpanded {
+            Text(reasoning)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+        }
+        .padding(.leading, 8)
+        .overlay(alignment: .leading) {
+          Rectangle()
+            .fill(Color.indigo.opacity(0.45))
+            .frame(width: 1)
+        }
+      }
+
+      if message.role == .assistant, let completionTokensPerSecond = message.completionTokensPerSecond {
+        Text(String(format: "%.1f tok/s", completionTokensPerSecond))
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
     }
   }
 }
@@ -2195,11 +2363,17 @@ struct ChatMessageRow: Identifiable, Equatable {
   let id: UUID
   let role: Role
   var content: String
+  var completionTokensPerSecond: Double?
+  var reasoning: String?
+  var isReasoningExpanded: Bool
 
-  init(role: Role, content: String, id: UUID = UUID()) {
+  init(role: Role, content: String, id: UUID = UUID(), completionTokensPerSecond: Double? = nil, reasoning: String? = nil, isReasoningExpanded: Bool = false) {
     self.id = id
     self.role = role
     self.content = content
+    self.completionTokensPerSecond = completionTokensPerSecond
+    self.reasoning = reasoning
+    self.isReasoningExpanded = isReasoningExpanded
   }
 }
 
@@ -2221,6 +2395,11 @@ struct SettingsView: View {
   @State private var replacementToken = ""
   @State private var isRetesting = false
   @State private var revealToken = false
+  @State private var profile: GatewayUserProfile?
+  @State private var isLoadingProfile = false
+  @State private var isSavingProfile = false
+  @State private var profileMessage: String?
+  @State private var profileError: String?
   @FocusState private var focusedField: Field?
 
   /// Bridges the optional `selectedVoiceID` into the picker and persists
@@ -2291,6 +2470,72 @@ struct SettingsView: View {
           }
         }
 
+        if let profile {
+          ForEach(profile.sections) { profileSection in
+            Section(profileSection.title) {
+              ForEach(profileSection.fields) { field in
+                TextField(
+                  field.label,
+                  text: Binding(
+                    get: { profileFieldValue(sectionID: profileSection.id, fieldKey: field.key) },
+                    set: { updateProfileField(sectionID: profileSection.id, fieldKey: field.key, value: $0) }
+                  ),
+                  axis: .vertical
+                )
+                .lineLimit(1...3)
+              }
+            }
+          }
+
+          Section("Profile") {
+            if let profileMessage {
+              Text(profileMessage)
+                .foregroundStyle(.green)
+            }
+            if let profileError {
+              Text(profileError)
+                .foregroundStyle(.red)
+            }
+            Button {
+              Task { await saveProfile() }
+            } label: {
+              HStack(spacing: 6) {
+                Text("Save Profile")
+                if isSavingProfile {
+                  ProgressView()
+                    .controlSize(.small)
+                }
+              }
+            }
+            .disabled(isSavingProfile)
+
+            Button("Refresh Profile") {
+              Task { await loadProfile() }
+            }
+            .disabled(isLoadingProfile || isSavingProfile)
+          }
+        } else {
+          Section("Profile") {
+            if isLoadingProfile {
+              HStack(spacing: 8) {
+                ProgressView()
+                  .controlSize(.small)
+                Text("Loading profile…")
+              }
+            } else if let profileError {
+              Text(profileError)
+                .foregroundStyle(.red)
+              Button("Retry") {
+                Task { await loadProfile() }
+              }
+            } else {
+              Button("Load Profile") {
+                Task { await loadProfile() }
+              }
+            }
+          }
+        }
+
         Section("Credentials") {
           RevealableTokenField(
             title: "API Token",
@@ -2318,8 +2563,61 @@ struct SettingsView: View {
           replacementToken = model.gatewayToken ?? ""
         }
         await model.loadVoices()
+        await loadProfile()
       }
     }
+  }
+
+  private func loadProfile() async {
+    guard let baseURL = model.gatewayBaseURL else {
+      profileError = GatewayChatError.missingConfiguration.localizedDescription
+      return
+    }
+    isLoadingProfile = true
+    defer { isLoadingProfile = false }
+    do {
+      profile = try await model.chatClient.fetchUserProfile(baseURL: baseURL, token: model.gatewayToken)
+      profileError = nil
+    } catch {
+      profileError = error.localizedDescription
+    }
+  }
+
+  private func saveProfile() async {
+    guard let baseURL = model.gatewayBaseURL, let profile else { return }
+    isSavingProfile = true
+    defer { isSavingProfile = false }
+    do {
+      self.profile = try await model.chatClient.updateUserProfile(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        profile: profile
+      )
+      profileError = nil
+      profileMessage = "Saved"
+    } catch {
+      profileError = error.localizedDescription
+      profileMessage = nil
+    }
+  }
+
+  private func profileFieldValue(sectionID: String, fieldKey: String) -> String {
+    guard let profile,
+          let section = profile.sections.first(where: { $0.id == sectionID }),
+          let field = section.fields.first(where: { $0.key == fieldKey })
+    else { return "" }
+    return field.value
+  }
+
+  private func updateProfileField(sectionID: String, fieldKey: String, value: String) {
+    guard var profile else { return }
+    for sectionIndex in profile.sections.indices where profile.sections[sectionIndex].id == sectionID {
+      for fieldIndex in profile.sections[sectionIndex].fields.indices where profile.sections[sectionIndex].fields[fieldIndex].key == fieldKey {
+        profile.sections[sectionIndex].fields[fieldIndex].value = value
+      }
+    }
+    self.profile = profile
+    profileMessage = nil
   }
 }
 

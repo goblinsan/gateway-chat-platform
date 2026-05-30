@@ -55,6 +55,7 @@ export interface AgentChatResponse {
   }
   latencyMs?: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  completionTokensPerSecond?: number
   routingExplanation?: RoutingExplanation
 }
 
@@ -74,6 +75,7 @@ export interface AgentStreamDoneEvent {
   threadId?: string
   latencyMs: number
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  completionTokensPerSecond?: number
   routingExplanation?: RoutingExplanation
   status?: 'completed' | 'approval_required' | 'paused'
   orchestrationState?: {

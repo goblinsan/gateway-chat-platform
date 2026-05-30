@@ -89,6 +89,7 @@ struct LivePlanTrackerView: View {
   @ObservedObject var model: GatewayAppViewModel
   @State private var plans: [GatewayPlanGoal] = []
   @State private var isLoading = false
+  @State private var isSyncingHealth = false
   @State private var errorMessage: String?
   @State private var textEntryContext: TextEntryContext?
 
@@ -358,6 +359,36 @@ struct LivePlanTrackerView: View {
       }
       .navigationTitle("Plan Tracker")
       .toolbar {
+        #if os(macOS)
+        ToolbarItem(placement: .automatic) {
+          Button {
+            textEntryContext = TextEntryContext(
+              title: "New Goal",
+              placeholder: "Goal title",
+              initialValue: "",
+              kind: .createGoal
+            )
+          } label: {
+            Label("New Goal", systemImage: "plus")
+          }
+        }
+        ToolbarItem(placement: .automatic) {
+          Button {
+            Task { await syncAppleHealth() }
+          } label: {
+            Label("Sync Health", systemImage: "heart.text.square")
+          }
+          .disabled(isSyncingHealth)
+        }
+        ToolbarItem(placement: .automatic) {
+          Button {
+            Task { await loadPlans() }
+          } label: {
+            Label("Refresh", systemImage: "arrow.clockwise")
+          }
+          .disabled(isLoading)
+        }
+        #else
         ToolbarItem(placement: .topBarLeading) {
           Button {
             textEntryContext = TextEntryContext(
@@ -372,12 +403,21 @@ struct LivePlanTrackerView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
           Button {
+            Task { await syncAppleHealth() }
+          } label: {
+            Label("Sync Health", systemImage: "heart.text.square")
+          }
+          .disabled(isSyncingHealth)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
             Task { await loadPlans() }
           } label: {
             Label("Refresh", systemImage: "arrow.clockwise")
           }
           .disabled(isLoading)
         }
+        #endif
       }
       .refreshable {
         await loadPlans()
@@ -459,6 +499,29 @@ struct LivePlanTrackerView: View {
         baseURL: baseURL,
         token: model.gatewayToken
       )
+      errorMessage = nil
+    } catch {
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private func syncAppleHealth() async {
+    guard let baseURL = model.gatewayBaseURL else { return }
+    isSyncingHealth = true
+    defer { isSyncingHealth = false }
+    do {
+      let summary = try await AppleHealthSummaryProvider().dailySummary()
+      _ = try await model.chatClient.syncPersonalDataBatch(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        batch: summary.personalDataBatch()
+      )
+      _ = try await model.chatClient.syncAppleHealthSummary(
+        baseURL: baseURL,
+        token: model.gatewayToken,
+        summary: summary
+      )
+      await loadPlans()
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription

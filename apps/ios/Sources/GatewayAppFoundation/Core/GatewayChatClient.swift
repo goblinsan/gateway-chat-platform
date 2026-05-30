@@ -8,12 +8,14 @@ public struct GatewayAgentSummary: Codable, Equatable, Identifiable, Sendable {
   public let name: String
   public let icon: String?
   public let enabled: Bool?
+  public let ttsVoiceId: String?
 
-  public init(id: String, name: String, icon: String?, enabled: Bool?) {
+  public init(id: String, name: String, icon: String?, enabled: Bool?, ttsVoiceId: String? = nil) {
     self.id = id
     self.name = name
     self.icon = icon
     self.enabled = enabled
+    self.ttsVoiceId = ttsVoiceId
   }
 }
 
@@ -358,6 +360,42 @@ public struct GatewayNotificationSummary: Decodable, Equatable, Identifiable, Se
   }
 }
 
+// MARK: - User profile models
+
+public struct GatewayUserProfileField: Codable, Equatable, Identifiable, Sendable {
+  public let key: String
+  public let label: String
+  public var value: String
+  public let updatedAt: String?
+
+  public var id: String { key }
+
+  enum CodingKeys: String, CodingKey {
+    case key
+    case label
+    case value
+    case updatedAt = "updated_at"
+  }
+}
+
+public struct GatewayUserProfileSection: Codable, Equatable, Identifiable, Sendable {
+  public let id: String
+  public let title: String
+  public var fields: [GatewayUserProfileField]
+}
+
+public struct GatewayUserProfile: Codable, Equatable, Sendable {
+  public let userID: String
+  public var sections: [GatewayUserProfileSection]
+  public let updatedAt: String?
+
+  enum CodingKeys: String, CodingKey {
+    case userID = "user_id"
+    case sections
+    case updatedAt = "updated_at"
+  }
+}
+
 private enum JSONValue: Decodable, Equatable, Sendable {
   case string(String)
   case number(Double)
@@ -598,8 +636,12 @@ public struct GatewayPlanGoal: Codable, Equatable, Identifiable, Sendable {
 public enum GatewayStreamEvent: Equatable, Sendable {
   /// A text token from the assistant response.
   case token(String)
+  /// Provider-exposed reasoning text streamed separately from answer tokens.
+  case reasoning(String)
+  /// A lightweight activity update from the agent runtime.
+  case status(String)
   /// Stream finished normally. Carries the resolved agent and thread IDs.
-  case done(agentID: String, threadID: String?)
+  case done(agentID: String, threadID: String?, completionTokensPerSecond: Double?)
   /// The orchestrated agent requires human approval before proceeding.
   case approvalRequest
   /// An alert was created during the agent run.
@@ -731,6 +773,11 @@ public protocol GatewayChatServing: Sendable {
     notificationID: String
   ) async throws
 
+  // MARK: - User profile
+
+  func fetchUserProfile(baseURL: URL, token: String?) async throws -> GatewayUserProfile
+  func updateUserProfile(baseURL: URL, token: String?, profile: GatewayUserProfile) async throws -> GatewayUserProfile
+
   // MARK: - Action Approval
 
   /// Fetch pending action approvals for the authenticated user.
@@ -762,6 +809,8 @@ public protocol GatewayChatServing: Sendable {
 
   // MARK: - Plan tracker
 
+  func syncPersonalDataBatch(baseURL: URL, token: String?, batch: GatewayPersonalDataBatch) async throws -> GatewayPersonalDataBatchResult
+  func syncAppleHealthSummary(baseURL: URL, token: String?, summary: GatewayAppleHealthSummary) async throws -> GatewayAppleHealthSyncResult
   func fetchPlans(baseURL: URL, token: String?) async throws -> [GatewayPlanGoal]
   func importPlanDocument(baseURL: URL, token: String?, title: String?, text: String, source: String?) async throws -> GatewayPlanGoal
   func createPlan(baseURL: URL, token: String?, title: String, vision: String?) async throws -> GatewayPlanGoal
@@ -1125,11 +1174,18 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     case "token":
       guard let tok = json["token"] as? String else { return nil }
       return .token(tok)
+    case "reasoning":
+      guard let text = json["text"] as? String else { return nil }
+      return .reasoning(text)
+    case "status":
+      guard let message = json["message"] as? String else { return nil }
+      return .status(message)
     case "done":
       let aid = (json["agentId"] as? String) ?? fallbackAgentID
       let rawTID = json["threadId"] as? String
       let tid = (rawTID?.isEmpty == false) ? rawTID : nil
-      return .done(agentID: aid, threadID: tid)
+      let tps = json["completionTokensPerSecond"] as? Double
+      return .done(agentID: aid, threadID: tid, completionTokensPerSecond: tps)
     case "approval_request":
       return .approvalRequest
     case "alert_created":
@@ -1328,6 +1384,52 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     }
   }
 
+  // MARK: - User profile endpoints
+
+  public func fetchUserProfile(baseURL: URL, token: String?) async throws -> GatewayUserProfile {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/profile") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "GET"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(UserProfileResponse.self, from: data)
+    return decoded.profile
+  }
+
+  public func updateUserProfile(
+    baseURL: URL,
+    token: String?,
+    profile: GatewayUserProfile
+  ) async throws -> GatewayUserProfile {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/profile") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "PUT"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(UserProfileUpdatePayload(profile: profile))
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    let decoded = try JSONDecoder().decode(UserProfileResponse.self, from: data)
+    return decoded.profile
+  }
+
   // MARK: - Action Approval endpoints
 
   public func fetchPendingApprovals(
@@ -1466,6 +1568,54 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     }
     let decoded = try JSONDecoder().decode(PlanResponse.self, from: data)
     return decoded.plan
+  }
+
+  public func syncAppleHealthSummary(
+    baseURL: URL,
+    token: String?,
+    summary: GatewayAppleHealthSummary
+  ) async throws -> GatewayAppleHealthSyncResult {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/health/apple/summary") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(summary)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    return try JSONDecoder().decode(GatewayAppleHealthSyncResult.self, from: data)
+  }
+
+  public func syncPersonalDataBatch(
+    baseURL: URL,
+    token: String?,
+    batch: GatewayPersonalDataBatch
+  ) async throws -> GatewayPersonalDataBatchResult {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/personal-data/batches") else {
+      throw GatewayChatError.missingConfiguration
+    }
+
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "POST"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(batch)
+
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+
+    return try JSONDecoder().decode(GatewayPersonalDataBatchResult.self, from: data)
   }
 
   public func createPlan(
@@ -1910,6 +2060,14 @@ private struct AlertDetailResponse: Decodable {
 
 private struct NotificationsListResponse: Decodable {
   let notifications: [GatewayNotificationSummary]
+}
+
+private struct UserProfileResponse: Decodable {
+  let profile: GatewayUserProfile
+}
+
+private struct UserProfileUpdatePayload: Encodable {
+  let profile: GatewayUserProfile
 }
 
 private struct ApprovalsListResponse: Decodable {

@@ -14,12 +14,14 @@ import InboxPanel from './components/InboxPanel'
 import PersonasPanel from './components/PersonasPanel'
 import UsagePanel from './components/UsagePanel'
 import PlanTrackerPanel from './components/PlanTrackerPanel'
+import ProfilePanel from './components/ProfilePanel'
 import { personaToAgentListItem } from './utils/persona'
 import { useThreads } from './hooks/useThreads'
 import { useInbox, type ChatInboxScope } from './hooks/useInbox'
 import { usePersonas } from './hooks/usePersonas'
 import { useUsage } from './hooks/useUsage'
 import { usePlans } from './hooks/usePlans'
+import { useProfile } from './hooks/useProfile'
 
 function resolveInboxScope(): ChatInboxScope {
   try {
@@ -42,6 +44,7 @@ function ChatLayout() {
   const personas = usePersonas()
   const usage = useUsage()
   const plans = usePlans()
+  const profile = useProfile()
   const refreshPlans = plans.refresh
 
   // Merge operator agents and enabled user personas into a single list
@@ -63,6 +66,7 @@ function ChatLayout() {
   const [showPersonas, setShowPersonas] = useState(false)
   const [showUsage, setShowUsage] = useState(false)
   const [showPlans, setShowPlans] = useState(false)
+  const [showProfile, setShowProfile] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sessionUserId, setSessionUserId] = useState<string | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
@@ -126,6 +130,12 @@ function ChatLayout() {
       void refreshPlans()
     }
   }, [showPlans, refreshPlans])
+
+  useEffect(() => {
+    if (showProfile) {
+      void profile.refresh()
+    }
+  }, [showProfile, profile.refresh])
 
   if (sessionUserId === null && sessionError === null) {
     return (
@@ -206,6 +216,7 @@ function ChatLayout() {
         unreadCount={inbox.unreadCount}
         onInbox={() => setShowInbox((value) => !value)}
         onPlans={() => { setShowPlans((v) => !v); setSidebarOpen(false) }}
+        onProfile={() => { setShowProfile((v) => !v); setSidebarOpen(false) }}
         onPersonas={() => { setShowPersonas((v) => !v); setSidebarOpen(false) }}
         onUsage={() => { setShowUsage((v) => !v); setSidebarOpen(false) }}
         onClose={() => setSidebarOpen(false)}
@@ -236,6 +247,13 @@ function ChatLayout() {
             className="px-2.5 py-1 border border-gray-700 text-xs text-gray-300"
           >
             Plans
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowProfile((value) => !value)}
+            className="px-2.5 py-1 border border-gray-700 text-xs text-gray-300"
+          >
+            Profile
           </button>
         </div>
 
@@ -327,6 +345,16 @@ function ChatLayout() {
         onUpdateTaskStatus={plans.updateTaskStatus}
         onDeleteTask={plans.removeTask}
         onClose={() => setShowPlans(false)}
+      />
+      <ProfilePanel
+        isOpen={showProfile}
+        profile={profile.profile}
+        loading={profile.loading}
+        saving={profile.saving}
+        error={profile.error}
+        onRefresh={profile.refresh}
+        onSave={profile.save}
+        onClose={() => setShowProfile(false)}
       />
     </div>
   )

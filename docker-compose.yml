@@ -10,17 +10,13 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: "0.0.0.0"
-    volumes:
-      - ${CHAT_API_DATA_DIR:-./.data/chat-api}:/app/data
     networks:
       - default
       - agent-service
     command: >
-      sh -lc "mkdir -p /app/data
-      && pnpm --filter @gateway/chat-api prisma:migrate
-      && pnpm --filter @gateway/chat-api start"
+      sh -lc "pnpm --filter @gateway/chat-api start"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      test: ["CMD-SHELL", "wget -qO- --header=\"Authorization: Bearer $$MOBILE_SHARED_TOKEN\" http://localhost:3000/api/health >/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 3

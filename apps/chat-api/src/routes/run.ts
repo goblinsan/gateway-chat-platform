@@ -1,17 +1,7 @@
-import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
-import type { AgentRunRequest, AgentRunResponse } from '@gateway/shared'
-import type { ProviderMessage } from '@gateway/shared'
-import { getAgent } from '../agents/registry'
-import { getProviderRegistry } from '../config/providerRegistry'
+import type { AgentRunRequest, AgentRunResponse, ProviderMessage } from '@gateway/shared'
 import { getEnv } from '../config/env'
-import { getPrismaClient } from '../services/db'
-import { upsertConversation, persistMessage, persistUsageLog } from '../services/persistence'
-import { estimateCostUsd } from '../services/costEstimator'
-import { resolveProviderChain, estimatePromptTokens } from '../routing'
-import { buildAutomationMessages } from '../services/automationContext'
 import { synthesize } from '../services/ttsClient'
-import { syncAgentConversationToNotes } from '../services/notesSync'
 import { publishInboxMessage } from '../services/inbox'
 import { sendToAgentService } from '../services/agentServiceClient'
 
@@ -47,13 +37,6 @@ const runBodySchema = {
   },
 } as const
 
-/**
- * POST /api/agents/:id/run — non-interactive automation endpoint.
- *
- * Designed for scheduler / control-plane invocation. Runs a single-turn
- * prompt against the specified agent using the same routing and provider
- * pipeline as /api/chat, but without thread persistence requirements.
- */
 export default async function agentRunRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string }; Body: AgentRunRequest }>(
     '/agents/:id/run',
@@ -64,142 +47,58 @@ export default async function agentRunRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const { id: agentId } = req.params
       const { prompt, context, delivery } = req.body
-
-      const agent = getAgent(agentId)
-      if (!agent) {
-        return reply.status(404).send({ error: `Agent '${agentId}' not found` })
-      }
-
-      const registry = getProviderRegistry()
-
-      // Extract automation metadata early so it is available throughout the handler.
       const metadata = context?.metadata && typeof context.metadata === 'object'
         ? context.metadata as Record<string, unknown>
         : undefined
-
-      // Build provider messages via the automation context helper
-      const providerMessages: ProviderMessage[] = buildAutomationMessages(agent, prompt, context)
-
-      // Resolve provider chain via routing engine
-      const policy = agent.routingPolicy ?? { preferredProvider: agent.providerName }
-      const promptTokenCount = estimatePromptTokens(providerMessages)
-      const availableProviders = registry.getAll().map((a) => a.name)
-      const decision = resolveProviderChain(policy, promptTokenCount, availableProviders)
-
-      // Log routing decision and delivery metadata
-      req.log.info(
-        {
-          agentId,
-          selectedProvider: decision.selectedProvider,
-          orderedChain: decision.orderedChain,
-          reason: decision.reason,
-          ...(context?.workflowId ? { workflowId: context.workflowId } : {}),
-          ...(context?.source ? { source: context.source } : {}),
-          ...(delivery ? { delivery } : {}),
-        },
-        'Automation run: routing decision',
-      )
-
+      const resolvedThreadId =
+        typeof delivery?.threadId === 'string'
+          ? delivery.threadId
+          : typeof metadata?.threadId === 'string'
+            ? metadata.threadId
+            : undefined
+      const messages: ProviderMessage[] = [{ role: 'user', content: prompt }]
       const startTime = Date.now()
 
-      // Route based on the agent's execution mode (Issue #106, #107, #108).
-      let runUsedProvider: string
-      let runModel: string
-      let runContent: string
-      let runUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
-      let runResultThreadId: string | undefined
-
+      let response: AgentRunResponse
       try {
-        if (agent.executionMode === 'orchestrated') {
-          // Resolve the thread ID from delivery spec or context metadata so the
-          // orchestrator can attribute its results correctly (Issue #116).
-          const resolvedThreadId =
-            typeof delivery?.threadId === 'string'
-              ? delivery.threadId
-              : typeof metadata?.threadId === 'string'
-                ? metadata.threadId
-                : undefined
+        const result = await sendToAgentService({
+          agentId,
+          model: '',
+          messages,
+          workflowId: context?.workflowId,
+          workflowSource: context?.source,
+          deliveryMode: delivery?.mode,
+          userId: typeof delivery?.userId === 'string' ? delivery.userId : req.userId,
+          channelId: typeof delivery?.channelId === 'string' ? delivery.channelId : undefined,
+          threadId: resolvedThreadId,
+        })
 
-          const agentServiceResult = await sendToAgentService({
+        if (result.status === 'approval_required' || result.status === 'paused') {
+          return reply.status(202).send({
             agentId,
-            model: agent.model,
-            messages: providerMessages,
-            temperature: agent.temperature,
-            maxTokens: agent.maxTokens,
-            modelParams: agent.endpointConfig?.modelParams,
-            // Normalized workflow + delivery metadata (Issue #114)
-            workflowId: context?.workflowId,
-            workflowSource: context?.source,
-            deliveryMode: delivery?.mode,
-            userId: typeof delivery?.userId === 'string' ? delivery.userId : undefined,
-            channelId: typeof delivery?.channelId === 'string' ? delivery.channelId : undefined,
-            threadId: resolvedThreadId,
-          })
+            usedProvider: result.usedProvider,
+            model: result.model,
+            content: '',
+            latencyMs: Date.now() - startTime,
+            status: result.status,
+            ...(result.orchestrationState ? { orchestrationState: result.orchestrationState } : {}),
+          } satisfies AgentRunResponse)
+        }
 
-          // Surface approval-required and paused states instead of treating them
-          // as generic errors or empty responses (Issue #115).
-          const orchStatus = agentServiceResult.status
-          if (orchStatus === 'approval_required' || orchStatus === 'paused') {
-            const latencyMs = Date.now() - startTime
-            req.log.info(
-              {
-                agentId,
-                status: orchStatus,
-                orchestrationState: agentServiceResult.orchestrationState,
-              },
-              'Automation run: orchestration paused',
-            )
-            const pausedResponse: AgentRunResponse = {
-              agentId,
-              usedProvider: agentServiceResult.usedProvider,
-              model: agentServiceResult.model,
-              content: '',
-              latencyMs,
-              status: orchStatus,
-              ...(agentServiceResult.orchestrationState
-                ? { orchestrationState: agentServiceResult.orchestrationState }
-                : {}),
-            }
-            return reply.status(202).send(pausedResponse)
-          }
-
-          runUsedProvider = agentServiceResult.usedProvider
-          runModel = agentServiceResult.model
-          runContent = agentServiceResult.message.content
-          runUsage = agentServiceResult.usage
-          // Capture optional thread attribution returned by the orchestrator (Issue #116).
-          runResultThreadId = agentServiceResult.resultThreadId
-        } else {
-          const result = await registry.sendChatWithChain(decision.orderedChain, {
-            model: agent.model,
-            messages: providerMessages,
-            temperature: agent.temperature,
-            maxTokens: agent.maxTokens,
-            modelParams: agent.endpointConfig?.modelParams,
-          })
-          runUsedProvider = result.usedProvider
-          runModel = result.response.model ?? agent.model
-          runContent = result.response.message.content
-          runUsage = result.response.usage
+        response = {
+          agentId,
+          usedProvider: result.usedProvider,
+          model: result.model,
+          content: result.message.content,
+          latencyMs: Date.now() - startTime,
+          ...(result.usage ? { usage: result.usage } : {}),
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Agent execution failed'
-        req.log.error({ err, agentId }, 'Automation run failed')
+        req.log.error({ err, agentId }, 'agent-service automation run failed')
         return reply.status(502).send({ error: message })
       }
 
-      const latencyMs = Date.now() - startTime
-
-      const response: AgentRunResponse = {
-        agentId,
-        usedProvider: runUsedProvider,
-        model: runModel,
-        content: runContent,
-        latencyMs,
-        ...(runUsage ? { usage: runUsage } : {}),
-      }
-
-      // If TTS delivery requested, synthesize audio and attach metadata
       if (delivery?.mode === 'tts') {
         const env = getEnv()
         if (!env.TTS_ENABLED) {
@@ -218,25 +117,23 @@ export default async function agentRunRoutes(app: FastifyInstance) {
           }
         } catch (err) {
           req.log.error({ err, agentId }, 'TTS synthesis failed during automation run')
-          response.tts = { enabled: true, voice: delivery.voice ?? env.TTS_DEFAULT_VOICE, format: delivery.format ?? 'wav', contentType: '' }
+          response.tts = {
+            enabled: true,
+            voice: delivery.voice ?? env.TTS_DEFAULT_VOICE,
+            format: delivery.format ?? 'wav',
+            contentType: '',
+          }
         }
       }
 
       if (delivery?.mode === 'inbox') {
-        // Prefer thread attribution from the orchestrator, then delivery spec, then context
-        // metadata. This ensures issue #116: orchestrated results are correctly thread-linked.
-        const inboxThreadId =
-          runResultThreadId ??
-          (typeof delivery.threadId === 'string' ? delivery.threadId : undefined) ??
-          (typeof metadata?.threadId === 'string' ? metadata.threadId : undefined)
-
         const inboxItem = await publishInboxMessage({
-          userId: typeof delivery.userId === 'string' ? delivery.userId : undefined,
+          userId: typeof delivery.userId === 'string' ? delivery.userId : req.userId,
           channelId: typeof delivery.channelId === 'string' ? delivery.channelId : undefined,
           agentId,
           content: response.content,
           kind: typeof delivery.kind === 'string' ? delivery.kind : 'coach_prompt',
-          threadId: inboxThreadId,
+          threadId: resolvedThreadId,
           threadTitle:
             typeof delivery.threadTitle === 'string'
               ? delivery.threadTitle
@@ -255,68 +152,6 @@ export default async function agentRunRoutes(app: FastifyInstance) {
           channelId: inboxItem.channelId,
         }
       }
-
-      // Persist usage log asynchronously
-      const prisma = getPrismaClient()
-      const threadId = typeof metadata?.threadId === 'string' && metadata.threadId.trim()
-        ? metadata.threadId.trim()
-        : undefined
-      const threadTitle = typeof metadata?.threadTitle === 'string' && metadata.threadTitle.trim()
-        ? metadata.threadTitle.trim()
-        : prompt.slice(0, 60) || 'Automation Conversation'
-      const estimatedCostUsd = runUsage
-        ? estimateCostUsd(
-            runModel,
-            runUsage.promptTokens,
-            runUsage.completionTokens,
-          )
-        : 0
-      void (async () => {
-        try {
-          if (threadId) {
-            await upsertConversation(prisma, {
-              id: threadId,
-              userId: req.userId,
-              agentId,
-              title: threadTitle,
-            })
-            await persistMessage(prisma, {
-              id: randomUUID(),
-              conversationId: threadId,
-              role: 'user',
-              content: prompt,
-            })
-            await persistMessage(prisma, {
-              id: randomUUID(),
-              conversationId: threadId,
-              role: 'assistant',
-              content: response.content,
-            })
-          }
-          await persistUsageLog(prisma, {
-            userId: req.userId,
-            ...(threadId ? { conversationId: threadId } : {}),
-            agentId,
-            provider: runUsedProvider,
-            model: runModel,
-            promptTokens: runUsage?.promptTokens ?? 0,
-            completionTokens: runUsage?.completionTokens ?? 0,
-            totalTokens: runUsage?.totalTokens ?? 0,
-            estimatedCostUsd,
-            latencyMs,
-          })
-          if (threadId) {
-            await syncAgentConversationToNotes(agent, {
-              threadId,
-              source: 'automation',
-              userMessage: prompt,
-              assistantMessage: response.content,
-            })
-          }
-        } catch (err) {
-          req.log.warn({ err }, 'Failed to persist automation usage log')
-        }
-      })()
 
       return reply.send(response)
     },

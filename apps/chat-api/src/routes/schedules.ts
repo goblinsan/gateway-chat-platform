@@ -3,6 +3,7 @@ import {
   AgentServiceError,
   createScheduleInAgentService,
   deleteScheduleInAgentService,
+  listScheduleHistoryFromAgentService,
   listSchedulesFromAgentService,
 } from '../services/agentServiceClient'
 
@@ -49,6 +50,19 @@ export default async function schedulesRoutes(app: FastifyInstance) {
       return reply.send({ schedules })
     } catch (err) {
       return sendAgentServiceError(reply, req, err, 'list schedules')
+    }
+  })
+
+  app.get<{ Querystring: { limit?: string } }>('/schedules/history', async (req, reply) => {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    try {
+      const schedules = await listScheduleHistoryFromAgentService(
+        req.userId,
+        Number.isFinite(limit) ? limit : undefined,
+      )
+      return reply.send({ schedules })
+    } catch (err) {
+      return sendAgentServiceError(reply, req, err, 'list schedule history')
     }
   })
 

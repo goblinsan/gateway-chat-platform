@@ -61,6 +61,21 @@ function RoutingInfo({ explanation }: { explanation: NonNullable<MessageMeta['ro
   )
 }
 
+function ReasoningPreview({ text, open }: { text: string; open: boolean }) {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  return (
+    <details open={open} className="mb-3 border-l border-indigo-500/50 pl-3 text-xs text-gray-400">
+      <summary className="cursor-pointer select-none text-indigo-300 hover:text-indigo-200">
+        Reasoning
+      </summary>
+      <div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap leading-relaxed text-gray-400">
+        {trimmed}
+      </div>
+    </details>
+  )
+}
+
 function CopyIcon() {
   return (
     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -230,6 +245,9 @@ const MessageBubble = React.memo(function MessageBubble({
             isStreaming ? 'streaming-cursor' : ''
           }`}
         >
+          {meta?.reasoning && (
+            <ReasoningPreview text={meta.reasoning} open={isStreaming} />
+          )}
           {message.content ? (
             <MarkdownContent content={message.content} />
           ) : isStreaming ? null : (
@@ -285,6 +303,9 @@ const MessageBubble = React.memo(function MessageBubble({
                 {meta.usage.promptTokens}↑ {meta.usage.completionTokens}↓ ={' '}
                 {meta.usage.totalTokens} tok
               </span>
+            )}
+            {typeof meta.completionTokensPerSecond === 'number' && (
+              <span>{meta.completionTokensPerSecond.toFixed(1)} tok/s</span>
             )}
             {meta.costClass && (
               <span

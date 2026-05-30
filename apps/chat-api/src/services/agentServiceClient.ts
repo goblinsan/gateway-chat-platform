@@ -1,4 +1,4 @@
-import type { ProviderMessage } from '@gateway/shared'
+import type { AgentConfig, ProviderMessage, UserProfile, UserProfileResponse } from '@gateway/shared'
 import { getEnv } from '../config/env'
 
 export interface AgentServiceRequest {
@@ -29,6 +29,7 @@ export interface AgentServiceResponse {
     completionTokens: number
     totalTokens: number
   }
+  completionTokensPerSecond?: number
   status?: 'completed' | 'approval_required' | 'paused'
   orchestrationState?: {
     runId?: string
@@ -43,9 +44,13 @@ export interface AgentServiceResponse {
 
 export type AgentServiceStreamEvent =
   | { type: 'token'; token: string }
+  | { type: 'reasoning'; text: string }
+  | { type: 'status'; message: string }
   | {
       type: 'done'
       model: string
+      usage?: AgentServiceResponse['usage']
+      completionTokensPerSecond?: number
       status?: 'completed' | 'approval_required' | 'paused'
       orchestrationState?: {
         runId?: string
@@ -77,6 +82,20 @@ export class AgentServiceError extends Error {
     super(message)
     this.name = 'AgentServiceError'
   }
+}
+
+export async function fetchAgentsFromAgentService(): Promise<AgentConfig[]> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/agents`, {
+    method: 'GET',
+    headers: buildHeaders('application/json'),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { agents?: AgentConfig[] }
+  return body.agents ?? []
 }
 
 const INITIAL_BACKOFF_MS = 200
@@ -131,7 +150,12 @@ export async function sendToAgentService(
           ...(request.threadId ? { resultThreadId: request.threadId } : {}),
         }
       }
-      return data as unknown as AgentServiceResponse
+      const chatResponse = data as unknown as AgentServiceResponse
+      return {
+        ...chatResponse,
+        usage: normalizeRunUsage((data as Record<string, unknown>).usage) ?? chatResponse.usage,
+        completionTokensPerSecond: normalizeNumber((data as Record<string, unknown>).completionTokensPerSecond) ?? chatResponse.completionTokensPerSecond,
+      }
     } catch (err) {
       lastError = err instanceof Error ? err : new AgentServiceError(String(err))
       if (err instanceof AgentServiceError && err.statusCode && err.statusCode < 500) {
@@ -179,6 +203,8 @@ export async function streamFromAgentService(
   let selectedModel = request.model
   let pausedState: AgentServiceResponse['orchestrationState']
   let status: AgentServiceResponse['status']
+  let usage: AgentServiceResponse['usage']
+  let completionTokensPerSecond: number | undefined
 
   while (true) {
     const { done, value } = await reader.read()
@@ -193,14 +219,28 @@ export async function streamFromAgentService(
       const data = payload.data ?? {}
 
       switch (payload.type) {
+        case 'run.in_progress':
+          onEvent({ type: 'status', message: 'Thinking…' })
+          break
         case 'run.model_selected':
           selectedModel = String(data.backend ?? selectedModel)
           break
+        case 'run.tool_call': {
+          const toolName = typeof data.tool_name === 'string' ? data.tool_name : 'tool'
+          onEvent({ type: 'status', message: `Using ${toolName}…` })
+          break
+        }
         case 'run.assistant_delta': {
           const token = String(data.delta ?? '')
           if (!token) break
           content += token
           onEvent({ type: 'token', token })
+          break
+        }
+        case 'run.reasoning_delta': {
+          const text = String(data.delta ?? '')
+          if (!text) break
+          onEvent({ type: 'reasoning', text })
           break
         }
         case 'run.approval_requested':
@@ -234,16 +274,22 @@ export async function streamFromAgentService(
             ...(request.threadId ? { resultThreadId: request.threadId } : {}),
           }
         case 'run.completed':
-          selectedModel = String(data.model_backend ?? selectedModel)
+          selectedModel = String(data.model_backend ?? data.ModelBackend ?? selectedModel)
+          usage = normalizeRunUsage(data.usage ?? data.Usage)
+          completionTokensPerSecond = normalizeNumber(data.completion_tokens_per_second ?? data.CompletionTokensPerSecond)
           if (!content && typeof data.response === 'string') {
             content = data.response
+          } else if (!content && typeof data.Response === 'string') {
+            content = data.Response
           }
-          onEvent({ type: 'done', model: selectedModel, status: 'completed' })
+          onEvent({ type: 'done', model: selectedModel, usage, completionTokensPerSecond, status: 'completed' })
           return {
             agentId: request.agentId,
             usedProvider: 'agent-service',
             model: selectedModel,
             message: { role: 'assistant', content },
+            usage,
+            completionTokensPerSecond,
             status: 'completed',
             ...(request.threadId ? { resultThreadId: request.threadId } : {}),
           }
@@ -253,16 +299,34 @@ export async function streamFromAgentService(
     }
   }
 
-  onEvent({ type: 'done', model: selectedModel, status: status ?? 'completed', orchestrationState: pausedState })
+  onEvent({ type: 'done', model: selectedModel, usage, completionTokensPerSecond, status: status ?? 'completed', orchestrationState: pausedState })
   return {
     agentId: request.agentId,
     usedProvider: 'agent-service',
     model: selectedModel,
     message: { role: 'assistant', content },
+    usage,
+    completionTokensPerSecond,
     status: status ?? 'completed',
     orchestrationState: pausedState,
     ...(request.threadId ? { resultThreadId: request.threadId } : {}),
   }
+}
+
+function normalizeNumber(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined
+}
+
+function normalizeRunUsage(raw: unknown): AgentServiceResponse['usage'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const value = raw as Record<string, unknown>
+  const promptTokens = normalizeNumber(value.prompt_tokens ?? value.PromptTokens)
+  const completionTokens = normalizeNumber(value.completion_tokens ?? value.CompletionTokens)
+  const totalTokens = normalizeNumber(value.total_tokens ?? value.TotalTokens)
+  if (promptTokens === undefined || completionTokens === undefined || totalTokens === undefined) {
+    return undefined
+  }
+  return { promptTokens, completionTokens, totalTokens }
 }
 
 function isAutomation(request: AgentServiceRequest): boolean {
@@ -688,6 +752,51 @@ export async function listSchedulesFromAgentService(userId: string, limit?: numb
   return body.schedules ?? []
 }
 
+export async function listScheduleHistoryFromAgentService(userId: string, limit?: number): Promise<AgentServiceSchedule[]> {
+  const base = requireAgentServiceUrl()
+  const url = new URL(`${base}/internal/schedules/history`)
+  if (limit && limit > 0) url.searchParams.set('limit', String(limit))
+  const res = await fetchWithTimeout(url.toString(), {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as { schedules?: AgentServiceSchedule[] }
+  return body.schedules ?? []
+}
+
+export async function getUserProfileFromAgentService(userId: string): Promise<UserProfile> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/profile`, {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as UserProfileResponse
+  return body.profile
+}
+
+export async function updateUserProfileInAgentService(userId: string, profile: UserProfile): Promise<UserProfile> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/profile`, {
+    method: 'PUT',
+    headers: buildUserHeaders(userId),
+    body: JSON.stringify({ profile }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  const body = (await res.json()) as UserProfileResponse
+  return body.profile
+}
+
 export async function deleteScheduleInAgentService(userId: string, scheduleId: string): Promise<void> {
   const base = requireAgentServiceUrl()
   const res = await fetchWithTimeout(`${base}/internal/schedules/${encodeURIComponent(scheduleId)}`, {
@@ -1050,6 +1159,75 @@ export async function deletePlanInAgentService(userId: string, planId: string): 
     const text = await res.text().catch(() => '')
     throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
   }
+}
+
+export interface AppleHealthSummaryPayload {
+  date?: string
+  timezone?: string
+  activity?: Record<string, unknown>
+  nutrition?: Record<string, unknown>
+}
+
+export interface PersonalDataRecordPayload {
+  source_record_type?: string
+  source_record_subtype?: string
+  source_record_id?: string
+  dedupe_key?: string
+  start_time?: string
+  end_time?: string
+  observed_at?: string
+  value?: number
+  unit?: string
+  raw_payload_json?: Record<string, unknown>
+  normalized_payload_json?: Record<string, unknown>
+  source_metadata_json?: Record<string, unknown>
+  trust_level?: string
+}
+
+export interface PersonalDataBatchPayload {
+  source_system?: string
+  source_device?: string
+  source_app?: string
+  sync_started_at?: string
+  sync_completed_at?: string
+  schema_version?: string
+  normalization_version?: string
+  metadata_json?: Record<string, unknown>
+  records?: PersonalDataRecordPayload[]
+}
+
+export async function ingestAppleHealthSummaryInAgentService(
+  userId: string,
+  input: AppleHealthSummaryPayload,
+): Promise<Record<string, unknown>> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/apple-health/summary`, {
+    method: 'POST',
+    headers: buildUserHeaders(userId),
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  return await res.json() as Record<string, unknown>
+}
+
+export async function ingestPersonalDataBatchInAgentService(
+  userId: string,
+  input: PersonalDataBatchPayload,
+): Promise<Record<string, unknown>> {
+  const base = requireAgentServiceUrl()
+  const res = await fetchWithTimeout(`${base}/internal/personal-data/batches`, {
+    method: 'POST',
+    headers: buildUserHeaders(userId),
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+  return await res.json() as Record<string, unknown>
 }
 
 export async function registerDeviceTokenInAgentService(

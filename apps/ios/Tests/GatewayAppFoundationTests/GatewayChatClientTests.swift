@@ -64,6 +64,74 @@ final class GatewayChatClientTests: XCTestCase {
     XCTAssertEqual(plans[0].milestones.first?.tasks.first?.status, .blocked)
   }
 
+  func testSyncPersonalDataBatchPostsGeneralizedBatch() async throws {
+    URLProtocolStub.handler = { request in
+      XCTAssertEqual(request.url?.path, "/chat/api/personal-data/batches")
+      XCTAssertEqual(request.httpMethod, "POST")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-123")
+
+      let bodyData = try XCTUnwrap(request.stubbedBodyData())
+      let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+      XCTAssertEqual(payload["source_system"] as? String, "apple_healthkit")
+      XCTAssertEqual(payload["source_app"] as? String, "Apple Health")
+      let records = try XCTUnwrap(payload["records"] as? [[String: Any]])
+      XCTAssertEqual(records.first?["source_record_type"] as? String, "health.workout")
+      XCTAssertEqual(records.first?["source_record_subtype"] as? String, "running")
+      XCTAssertEqual(records.first?["value"] as? Double, 3.1)
+
+      let body = """
+      {"batch_id":"batch-1","status":"accepted","received":1,"inserted":1,"updated":0,"rejected":0,"processing_status":"queued"}
+      """
+      return (200, Data(body.utf8))
+    }
+
+    let client = GatewayChatClient(session: makeSession())
+    let result = try await client.syncPersonalDataBatch(
+      baseURL: URL(string: "https://gateway.example.com/chat/")!,
+      token: "token-123",
+      batch: GatewayPersonalDataBatch(
+        sourceSystem: "apple_healthkit",
+        sourceApp: "Apple Health",
+        records: [
+          GatewayPersonalDataRecord(
+            sourceRecordType: "health.workout",
+            sourceRecordSubtype: "running",
+            sourceRecordID: "workout-1",
+            value: 3.1,
+            unit: "mile",
+            sourceMetadata: ["source": .string("Apple Watch")],
+            trustLevel: "device_measured"
+          ),
+        ]
+      )
+    )
+
+    XCTAssertEqual(result.batchID, "batch-1")
+    XCTAssertEqual(result.processingStatus, "queued")
+  }
+
+  func testAppleHealthSummaryBuildsDeterministicPersonalDataBatch() throws {
+    let summary = GatewayAppleHealthSummary(
+      date: "2026-05-28",
+      timezone: "America/New_York",
+      activity: ["steps": 10000, "exercise_minutes": 45],
+      nutrition: ["protein_grams": 140]
+    )
+
+    let batch = summary.personalDataBatch(sourceDevice: "iPhone", sourceApp: "Apple Health")
+
+    XCTAssertEqual(batch.sourceSystem, "apple_healthkit")
+    XCTAssertEqual(batch.sourceDevice, "iPhone")
+    XCTAssertEqual(batch.sourceApp, "Apple Health")
+    XCTAssertEqual(batch.records.map(\.sourceRecordSubtype), ["exercise_minutes", "steps", "protein_grams"])
+    XCTAssertEqual(batch.records.first?.sourceRecordID, "apple_healthkit:2026-05-28:health.activity:exercise_minutes")
+    XCTAssertEqual(batch.records.first?.startTime, "2026-05-28T00:00:00-04:00")
+    XCTAssertEqual(batch.records.first?.endTime, "2026-05-29T00:00:00-04:00")
+    XCTAssertEqual(batch.records.first?.unit, "min")
+    XCTAssertEqual(batch.records.last?.sourceRecordType, "health.nutrition")
+    XCTAssertEqual(batch.records.last?.unit, "g")
+  }
+
   func testCreateMilestonePostsTitleToPlanEndpoint() async throws {
     URLProtocolStub.handler = { request in
       XCTAssertEqual(request.url?.path, "/chat/api/plans/plan-1/milestones")
@@ -229,7 +297,7 @@ final class GatewayChatClientTests: XCTestCase {
 
   func testStreamPromptEmitsTokensAndDoneEvent() async throws {
     let sseBody = """
-    data: {"type":"token","token":"Hello"}\n\ndata: {"type":"token","token":" world"}\n\ndata: {"type":"done","agentId":"agent-a","threadId":"thread-2"}\n\n
+    data: {"type":"status","message":"Thinking…"}\n\ndata: {"type":"reasoning","text":"Checking constraints"}\n\ndata: {"type":"token","token":"Hello"}\n\ndata: {"type":"token","token":" world"}\n\ndata: {"type":"done","agentId":"agent-a","threadId":"thread-2","completionTokensPerSecond":42.5}\n\n
     """
     URLProtocolStub.handler = { request in
       XCTAssertEqual(request.url?.path, "/chat/api/chat/stream")
@@ -255,9 +323,11 @@ final class GatewayChatClientTests: XCTestCase {
     }
 
     XCTAssertEqual(collected, [
+      .status("Thinking…"),
+      .reasoning("Checking constraints"),
       .token("Hello"),
       .token(" world"),
-      .done(agentID: "agent-a", threadID: "thread-2"),
+      .done(agentID: "agent-a", threadID: "thread-2", completionTokensPerSecond: 42.5),
     ])
   }
 

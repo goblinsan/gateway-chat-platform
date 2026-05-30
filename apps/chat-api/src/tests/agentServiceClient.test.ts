@@ -237,6 +237,10 @@ describe('sendToAgentService', () => {
           controller.enqueue(new TextEncoder().encode([
             'data: {"type":"run.model_selected","data":{"backend":"local-model"}}',
             '',
+            'data: {"type":"run.reasoning_delta","data":{"delta":"Checking "}}',
+            '',
+            'data: {"type":"run.reasoning_delta","data":{"delta":"constraints"}}',
+            '',
             'data: {"type":"run.assistant_delta","data":{"delta":"Hello "}}',
             '',
             'data: {"type":"run.assistant_delta","data":{"delta":"world"}}',
@@ -249,11 +253,15 @@ describe('sendToAgentService', () => {
       }),
     })
 
-    const events: Array<{ type: string; token?: string }> = []
+    const events: Array<{ type: string; token?: string; text?: string }> = []
     const result = await streamFromAgentService(MOCK_REQUEST, (event) => {
-      events.push(event as { type: string; token?: string })
+      events.push(event as { type: string; token?: string; text?: string })
     })
 
+    expect(events.filter((event) => event.type === 'reasoning').map((event) => event.text)).toEqual([
+      'Checking ',
+      'constraints',
+    ])
     expect(events.filter((event) => event.type === 'token')).toHaveLength(2)
     expect(result.message.content).toBe('Hello world')
     expect(result.model).toBe('local-model')
