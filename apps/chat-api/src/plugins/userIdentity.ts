@@ -27,6 +27,10 @@ function secureCompare(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer)
 }
 
+function mobileTokenMatches(bearerToken: string, configuredTokens: string[]): boolean {
+  return configuredTokens.some((token) => secureCompare(bearerToken, token))
+}
+
 function isMobileClientRequest(headers: Record<string, unknown>, url: string): boolean {
   const path = url.split('?')[0] ?? url
   if (path.startsWith('/api/mobile/')) return true
@@ -65,18 +69,24 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
   const env = getEnv()
   const cfConfigured = Boolean(env.CF_ACCESS_TEAM_DOMAIN && env.CF_ACCESS_AUD)
   const mobileSharedToken = env.MOBILE_SHARED_TOKEN?.trim()
+  const configuredMobileSharedTokens = Array.isArray(env.MOBILE_SHARED_TOKENS)
+    ? env.MOBILE_SHARED_TOKENS
+    : []
+  const mobileSharedTokens = [mobileSharedToken, ...configuredMobileSharedTokens]
+    .map((token) => token?.trim() ?? '')
+    .filter((token) => token.length > 0)
   const mobileSharedUserId = env.MOBILE_SHARED_USER_ID?.trim()
   const mobileFallbackUserId = mobileSharedUserId || env.CHAT_DEFAULT_USER_ID
 
   app.addHook('onRequest', async (req, reply) => {
     const bearerToken = extractBearerToken(req.headers.authorization)
     if (bearerToken) {
-      if (!mobileSharedToken) {
+      if (mobileSharedTokens.length === 0) {
         void reply.status(401).send({ error: 'Mobile bearer auth is not configured' })
         return
       }
 
-      if (!secureCompare(bearerToken, mobileSharedToken)) {
+      if (!mobileTokenMatches(bearerToken, mobileSharedTokens)) {
         void reply.status(401).send({ error: 'Invalid mobile bearer token' })
         return
       }

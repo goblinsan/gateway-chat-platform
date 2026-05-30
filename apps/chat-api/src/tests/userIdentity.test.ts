@@ -6,6 +6,7 @@ const mockEnv = {
   CF_ACCESS_AUD: undefined as string | undefined,
   CHAT_DEFAULT_USER_ID: 'me',
   MOBILE_SHARED_TOKEN: undefined as string | undefined,
+  MOBILE_SHARED_TOKENS: [] as string[],
   MOBILE_SHARED_USER_ID: undefined as string | undefined,
 }
 
@@ -33,6 +34,7 @@ describe('user identity plugin', () => {
     mockEnv.CF_ACCESS_AUD = undefined
     mockEnv.CHAT_DEFAULT_USER_ID = 'me'
     mockEnv.MOBILE_SHARED_TOKEN = undefined
+    mockEnv.MOBILE_SHARED_TOKENS = []
     mockEnv.MOBILE_SHARED_USER_ID = undefined
   })
 
@@ -169,6 +171,27 @@ describe('user identity plugin', () => {
 
     expect(res.statusCode).toBe(401)
     expect(JSON.parse(res.body).error).toBe('Invalid mobile bearer token')
+  })
+
+  it('accepts configured mobile token rotation values', async () => {
+    mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
+    mockEnv.CF_ACCESS_AUD = 'audience'
+    mockEnv.MOBILE_SHARED_TOKEN = 'current-secret'
+    mockEnv.MOBILE_SHARED_TOKENS = ['previous-secret']
+    mockEnv.MOBILE_SHARED_USER_ID = 'mobile-user'
+
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/session/me',
+      headers: {
+        authorization: 'Bearer previous-secret',
+        'x-gateway-client-platform': 'ios',
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ id: 'mobile-user', userId: 'mobile-user' })
   })
 
   it('uses the JWT subject in Cloudflare mode', async () => {

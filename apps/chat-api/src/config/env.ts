@@ -52,6 +52,11 @@ const envSchema = z.object({
 
   // Mobile bearer-token fallback
   MOBILE_SHARED_TOKEN: z.string().optional(),
+  MOBILE_SHARED_TOKENS: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.split(',').map((s) => s.trim()).filter(Boolean) : []))
+    .default(''),
   MOBILE_SHARED_USER_ID: z.string().optional(),
 
   // Internal agent-service (orchestration)
