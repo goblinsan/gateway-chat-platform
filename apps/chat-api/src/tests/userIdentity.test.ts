@@ -19,6 +19,9 @@ import sessionRoutes from '../routes/session'
 async function buildApp() {
   const app = Fastify({ logger: false })
   await app.register(userIdentityPlugin)
+  app.get('/api/health', async (req) => ({ status: 'ok', userId: req.userId }))
+  app.get('/api/agents', async (req) => ({ agents: [], userId: req.userId }))
+  app.post('/api/health/apple/summary', async (req) => ({ userId: req.userId }))
   await app.register(sessionRoutes, { prefix: '/api' })
   return app
 }
@@ -58,6 +61,31 @@ describe('user identity plugin', () => {
 
     const app = await buildApp()
     const res = await app.inject({ method: 'GET', url: '/api/session/me' })
+
+    expect(res.statusCode).toBe(401)
+    expect(JSON.parse(res.body).error).toContain('Missing Cloudflare Access')
+  })
+
+  it('allows public health and agent discovery in Cloudflare mode', async () => {
+    mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
+    mockEnv.CF_ACCESS_AUD = 'audience'
+
+    const app = await buildApp()
+    const health = await app.inject({ method: 'GET', url: '/api/health' })
+    const agents = await app.inject({ method: 'GET', url: '/api/agents' })
+
+    expect(health.statusCode).toBe(200)
+    expect(JSON.parse(health.body)).toEqual({ status: 'ok', userId: 'me' })
+    expect(agents.statusCode).toBe(200)
+    expect(JSON.parse(agents.body)).toEqual({ agents: [], userId: 'me' })
+  })
+
+  it('keeps user-scoped health sync protected in Cloudflare mode', async () => {
+    mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
+    mockEnv.CF_ACCESS_AUD = 'audience'
+
+    const app = await buildApp()
+    const res = await app.inject({ method: 'POST', url: '/api/health/apple/summary' })
 
     expect(res.statusCode).toBe(401)
     expect(JSON.parse(res.body).error).toContain('Missing Cloudflare Access')

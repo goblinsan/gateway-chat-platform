@@ -27,6 +27,17 @@ function secureCompare(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer)
 }
 
+function isPublicProbeRequest(method: string, url: string): boolean {
+  if (method.toUpperCase() !== 'GET') return false
+  const path = url.split('?')[0] ?? url
+  return path === '/'
+    || path === '/api/health'
+    || path === '/api/ready'
+    || path === '/api/agents'
+    || path === '/api/tts/health'
+    || path === '/api/tts/voices'
+}
+
 /**
  * User identity plugin.
  *
@@ -54,6 +65,11 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
   const mobileFallbackUserId = mobileSharedUserId || env.CHAT_DEFAULT_USER_ID
 
   app.addHook('onRequest', async (req, reply) => {
+    if (isPublicProbeRequest(req.method, req.url)) {
+      req.userId = env.CHAT_DEFAULT_USER_ID
+      return
+    }
+
     const cfToken =
       (req.headers['cf-access-jwt-assertion'] as string | undefined) ||
       extractCfAuthorizationCookie(req.headers.cookie)
