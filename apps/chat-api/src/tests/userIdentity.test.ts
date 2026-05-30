@@ -21,6 +21,7 @@ async function buildApp() {
   await app.register(userIdentityPlugin)
   app.get('/api/health', async (req) => ({ status: 'ok', userId: req.userId }))
   app.get('/api/agents', async (req) => ({ agents: [], userId: req.userId }))
+  app.get('/api/mobile/alerts', async (req) => ({ alerts: [], userId: req.userId }))
   app.post('/api/health/apple/summary', async (req) => ({ userId: req.userId }))
   await app.register(sessionRoutes, { prefix: '/api' })
   return app
@@ -66,7 +67,7 @@ describe('user identity plugin', () => {
     expect(JSON.parse(res.body).error).toContain('Missing Cloudflare Access')
   })
 
-  it('allows public health and agent discovery in Cloudflare mode', async () => {
+  it('requires identity for health and agent discovery in Cloudflare mode', async () => {
     mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
     mockEnv.CF_ACCESS_AUD = 'audience'
 
@@ -74,10 +75,10 @@ describe('user identity plugin', () => {
     const health = await app.inject({ method: 'GET', url: '/api/health' })
     const agents = await app.inject({ method: 'GET', url: '/api/agents' })
 
-    expect(health.statusCode).toBe(200)
-    expect(JSON.parse(health.body)).toEqual({ status: 'ok', userId: 'me' })
-    expect(agents.statusCode).toBe(200)
-    expect(JSON.parse(agents.body)).toEqual({ agents: [], userId: 'me' })
+    expect(health.statusCode).toBe(401)
+    expect(JSON.parse(health.body).error).toBe('Missing Cloudflare Access identity header')
+    expect(agents.statusCode).toBe(401)
+    expect(JSON.parse(agents.body).error).toBe('Missing Cloudflare Access identity header')
   })
 
   it('keeps user-scoped health sync protected in Cloudflare mode', async () => {
@@ -106,6 +107,68 @@ describe('user identity plugin', () => {
 
     expect(res.statusCode).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ id: 'mobile-user', userId: 'mobile-user' })
+  })
+
+  it('uses mobile bearer auth before Cloudflare browser identity', async () => {
+    mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
+    mockEnv.CF_ACCESS_AUD = 'audience'
+    mockEnv.MOBILE_SHARED_TOKEN = 'mobile-secret'
+    mockEnv.MOBILE_SHARED_USER_ID = 'mobile-user'
+
+    const app = await buildApp()
+    const payload = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')
+    const claims = Buffer.from(JSON.stringify({ sub: 'cf-user-123' })).toString('base64url')
+    const token = `${payload}.${claims}.signature`
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/session/me',
+      headers: {
+        authorization: 'Bearer mobile-secret',
+        'cf-access-jwt-assertion': token,
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ id: 'mobile-user', userId: 'mobile-user' })
+  })
+
+  it('returns mobile-specific errors for native requests without a bearer token', async () => {
+    mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
+    mockEnv.CF_ACCESS_AUD = 'audience'
+    mockEnv.MOBILE_SHARED_TOKEN = 'mobile-secret'
+
+    const app = await buildApp()
+    const hinted = await app.inject({
+      method: 'GET',
+      url: '/api/session/me',
+      headers: { 'x-gateway-client-platform': 'ios' },
+    })
+    const legacyMobile = await app.inject({ method: 'GET', url: '/api/mobile/alerts' })
+
+    expect(hinted.statusCode).toBe(401)
+    expect(JSON.parse(hinted.body).error).toBe('Missing mobile bearer token')
+    expect(legacyMobile.statusCode).toBe(401)
+    expect(JSON.parse(legacyMobile.body).error).toBe('Missing mobile bearer token')
+  })
+
+  it('returns mobile-specific errors for invalid bearer tokens', async () => {
+    mockEnv.CF_ACCESS_TEAM_DOMAIN = 'team.example.com'
+    mockEnv.CF_ACCESS_AUD = 'audience'
+    mockEnv.MOBILE_SHARED_TOKEN = 'mobile-secret'
+
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/session/me',
+      headers: {
+        authorization: 'Bearer wrong-secret',
+        'x-gateway-client-platform': 'ios',
+      },
+    })
+
+    expect(res.statusCode).toBe(401)
+    expect(JSON.parse(res.body).error).toBe('Invalid mobile bearer token')
   })
 
   it('uses the JWT subject in Cloudflare mode', async () => {

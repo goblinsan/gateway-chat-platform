@@ -27,15 +27,16 @@ function secureCompare(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer)
 }
 
-function isPublicProbeRequest(method: string, url: string): boolean {
-  if (method.toUpperCase() !== 'GET') return false
+function isMobileClientRequest(headers: Record<string, unknown>, url: string): boolean {
   const path = url.split('?')[0] ?? url
-  return path === '/'
-    || path === '/api/health'
-    || path === '/api/ready'
-    || path === '/api/agents'
-    || path === '/api/tts/health'
-    || path === '/api/tts/voices'
+  if (path.startsWith('/api/mobile/')) return true
+
+  const platformHeader = headers['x-gateway-client-platform']
+  const platform = Array.isArray(platformHeader) ? platformHeader[0] : platformHeader
+  if (typeof platform !== 'string') return false
+
+  const normalized = platform.trim().toLowerCase()
+  return normalized === 'ios' || normalized === 'android' || normalized === 'mobile'
 }
 
 /**
@@ -44,14 +45,17 @@ function isPublicProbeRequest(method: string, url: string): boolean {
  * Resolves a stable user identity for every incoming request and makes it
  * available as `req.userId`. Resolution order:
  *
- * 1. When CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD are set, require the
+ * 1. If a mobile bearer token is presented, validate it against
+ *    MOBILE_SHARED_TOKEN and resolve the configured mobile user. Native clients
+ *    do not participate in Cloudflare Access.
+ * 2. When CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD are set, require the
  *    `CF-Access-Jwt-Assertion` header. If MOBILE_SHARED_USER_ID is configured,
  *    reuse that stable identifier for browser requests so native and web
  *    clients can share the same server-backed thread namespace in single-user
  *    deployments; otherwise use the decoded JWT `sub` claim.
- * 2. Otherwise fall back to the `X-User-Id` request header (useful for local
+ * 3. Otherwise fall back to the `X-User-Id` request header (useful for local
  *    development and service-to-service calls).
- * 3. Otherwise fall back to the CHAT_DEFAULT_USER_ID environment variable.
+ * 4. Otherwise fall back to the CHAT_DEFAULT_USER_ID environment variable.
  *
  * No private auth topology or specific provider assumptions are baked in here.
  */
@@ -65,8 +69,24 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
   const mobileFallbackUserId = mobileSharedUserId || env.CHAT_DEFAULT_USER_ID
 
   app.addHook('onRequest', async (req, reply) => {
-    if (isPublicProbeRequest(req.method, req.url)) {
-      req.userId = env.CHAT_DEFAULT_USER_ID
+    const bearerToken = extractBearerToken(req.headers.authorization)
+    if (bearerToken) {
+      if (!mobileSharedToken) {
+        void reply.status(401).send({ error: 'Mobile bearer auth is not configured' })
+        return
+      }
+
+      if (!secureCompare(bearerToken, mobileSharedToken)) {
+        void reply.status(401).send({ error: 'Invalid mobile bearer token' })
+        return
+      }
+
+      req.userId = mobileFallbackUserId
+      return
+    }
+
+    if (isMobileClientRequest(req.headers, req.url)) {
+      void reply.status(401).send({ error: 'Missing mobile bearer token' })
       return
     }
 
@@ -93,22 +113,8 @@ export default fp(async function userIdentityPlugin(app: FastifyInstance) {
       return
     }
 
-    const bearerToken = extractBearerToken(req.headers.authorization)
-    if (
-      mobileSharedToken &&
-      bearerToken &&
-      secureCompare(bearerToken, mobileSharedToken)
-    ) {
-      req.userId = mobileFallbackUserId
-      return
-    }
-
     if (cfConfigured) {
-      void reply.status(401).send({
-        error: mobileSharedToken
-          ? 'Missing Cloudflare Access identity header or valid mobile bearer token'
-          : 'Missing Cloudflare Access identity header',
-      })
+      void reply.status(401).send({ error: 'Missing Cloudflare Access identity header' })
       return
     }
 

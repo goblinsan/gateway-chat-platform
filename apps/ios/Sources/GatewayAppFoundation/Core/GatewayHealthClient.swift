@@ -65,6 +65,7 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
 
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
+    request.setValue("ios", forHTTPHeaderField: "X-Gateway-Client-Platform")
     if let token, !token.isEmpty {
       request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
@@ -100,6 +101,7 @@ public final class GatewayHealthClient: GatewayHealthChecking, GatewaySessionIde
 
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
+    request.setValue("ios", forHTTPHeaderField: "X-Gateway-Client-Platform")
     if let token, !token.isEmpty {
       request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
