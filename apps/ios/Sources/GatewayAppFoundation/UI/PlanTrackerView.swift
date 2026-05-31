@@ -706,10 +706,10 @@ private struct PlannerHorizonView: View {
       case .day:
         taskListSection(title: "Day", tasks: tasks)
       case .week:
-        ForEach(orderedWeekdayIndices(for: selectedDate), id: \.self) { weekdayIndex in
-          let matching = tasks.filter { weekdayIndex(for: $0) == weekdayIndex }
+        ForEach(orderedWeekdayIndices(for: selectedDate), id: \.self) { weekdayNumber in
+          let matching = tasks.filter { weekdayIndex(for: $0) == weekdayNumber }
           if !matching.isEmpty {
-            taskListSection(title: weekdayDisplayName(for: weekdayIndex), tasks: matching)
+            taskListSection(title: weekdayDisplayName(for: weekdayNumber), tasks: matching)
           }
         }
       case .month:
@@ -1184,9 +1184,9 @@ private func normalizedWeekdayIndex(_ raw: String) -> Int? {
     calendar.weekdaySymbols,
     calendar.shortWeekdaySymbols,
     calendar.veryShortWeekdaySymbols,
-    DateFormatter().standaloneWeekdaySymbols,
-    DateFormatter().shortStandaloneWeekdaySymbols,
-    DateFormatter().veryShortStandaloneWeekdaySymbols,
+    DateFormatter().standaloneWeekdaySymbols ?? [],
+    DateFormatter().shortStandaloneWeekdaySymbols ?? [],
+    DateFormatter().veryShortStandaloneWeekdaySymbols ?? [],
   ]
 
   for candidates in localizedCandidates {
