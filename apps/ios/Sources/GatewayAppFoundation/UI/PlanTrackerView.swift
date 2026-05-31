@@ -706,10 +706,10 @@ private struct PlannerHorizonView: View {
       case .day:
         taskListSection(title: "Day", tasks: tasks)
       case .week:
-        ForEach(orderedWeekdays(for: selectedDate), id: \.self) { weekday in
-          let matching = tasks.filter { weekdaySymbol(for: $0) == weekday }
+        ForEach(orderedWeekdayIndices(for: selectedDate), id: \.self) { weekdayIndex in
+          let matching = tasks.filter { weekdayIndex(for: $0) == weekdayIndex }
           if !matching.isEmpty {
-            taskListSection(title: weekday, tasks: matching)
+            taskListSection(title: weekdayDisplayName(for: weekdayIndex), tasks: matching)
           }
         }
       case .month:
@@ -1111,12 +1111,12 @@ private func statusOrder(_ status: GatewayPlanTaskStatus) -> Int {
   }
 }
 
-private func weekdaySymbol(for context: PlannerTaskContext) -> String? {
+private func weekdayIndex(for context: PlannerTaskContext) -> Int? {
   let taskTitle = context.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
-  let candidates = Calendar(identifier: .gregorian).weekdaySymbols
-  for symbol in candidates {
-    if taskTitle.lowercased().hasPrefix(symbol.lowercased() + ":") {
-      return symbol
+  if let separator = taskTitle.firstIndex(of: ":") {
+    let prefix = String(taskTitle[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+    if let weekday = normalizedWeekdayIndex(prefix) {
+      return weekday
     }
   }
 
@@ -1126,7 +1126,7 @@ private func weekdaySymbol(for context: PlannerTaskContext) -> String? {
     let milestone = context.milestone.title.lowercased()
     let title = context.task.title.lowercased()
     if title.contains(activity) || milestone.contains(activity) {
-      return normalizedWeekday(day)
+      return normalizedWeekdayIndex(day)
     }
   }
 
@@ -1136,10 +1136,10 @@ private func weekdaySymbol(for context: PlannerTaskContext) -> String? {
 private func matches(context: PlannerTaskContext, selectedDate: Date, horizon: PlannerHorizon) -> Bool {
   switch horizon {
   case .day:
-    return weekdaySymbol(for: context) == weekdayName(for: selectedDate)
+    return weekdayIndex(for: context) == weekdayIndex(for: selectedDate)
   case .week:
-    guard let weekday = weekdaySymbol(for: context) else { return false }
-    return orderedWeekdays(for: selectedDate).contains(weekday)
+    guard let weekday = weekdayIndex(for: context) else { return false }
+    return orderedWeekdayIndices(for: selectedDate).contains(weekday)
   case .month:
     return true
   case .year:
@@ -1147,31 +1147,57 @@ private func matches(context: PlannerTaskContext, selectedDate: Date, horizon: P
   }
 }
 
-private func weekdayName(for date: Date) -> String {
-  let calendar = Calendar(identifier: .gregorian)
-  let weekdayIndex = calendar.component(.weekday, from: date) - 1
-  return calendar.weekdaySymbols[weekdayIndex]
+private func weekdayIndex(for date: Date) -> Int {
+  let calendar = Calendar.current
+  return calendar.component(.weekday, from: date)
 }
 
-private func orderedWeekdays(for date: Date) -> [String] {
-  let calendar = Calendar(identifier: .gregorian)
-  let firstWeekday = calendar.firstWeekday - 1
-  let symbols = calendar.weekdaySymbols
-  return Array(symbols[firstWeekday...]) + Array(symbols[..<firstWeekday])
+private func orderedWeekdayIndices(for date: Date) -> [Int] {
+  let calendar = Calendar.current
+  let firstWeekday = calendar.firstWeekday
+  return Array(firstWeekday...7) + Array(1..<firstWeekday)
 }
 
-private func normalizedWeekday(_ raw: String) -> String {
+private func weekdayDisplayName(for weekday: Int) -> String {
+  let calendar = Calendar.current
+  let index = max(1, min(7, weekday)) - 1
+  return calendar.weekdaySymbols[index]
+}
+
+private func normalizedWeekdayIndex(_ raw: String) -> Int? {
   let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-  let mapping: [String: String] = [
-    "mon": "Monday", "monday": "Monday",
-    "tue": "Tuesday", "tues": "Tuesday", "tuesday": "Tuesday",
-    "wed": "Wednesday", "wednesday": "Wednesday",
-    "thu": "Thursday", "thur": "Thursday", "thurs": "Thursday", "thursday": "Thursday",
-    "fri": "Friday", "friday": "Friday",
-    "sat": "Saturday", "saturday": "Saturday",
-    "sun": "Sunday", "sunday": "Sunday",
+  let englishMapping: [String: Int] = [
+    "sun": 1, "sunday": 1,
+    "mon": 2, "monday": 2,
+    "tue": 3, "tues": 3, "tuesday": 3,
+    "wed": 4, "wednesday": 4,
+    "thu": 5, "thur": 5, "thurs": 5, "thursday": 5,
+    "fri": 6, "friday": 6,
+    "sat": 7, "saturday": 7,
   ]
-  return mapping[trimmed] ?? raw
+  if let mapped = englishMapping[trimmed] {
+    return mapped
+  }
+
+  let calendar = Calendar.current
+  let localizedCandidates = [
+    calendar.weekdaySymbols,
+    calendar.shortWeekdaySymbols,
+    calendar.veryShortWeekdaySymbols,
+    DateFormatter().standaloneWeekdaySymbols,
+    DateFormatter().shortStandaloneWeekdaySymbols,
+    DateFormatter().veryShortStandaloneWeekdaySymbols,
+  ]
+
+  for candidates in localizedCandidates {
+    for (index, symbol) in candidates.enumerated() {
+      if trimmed == symbol.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        return index + 1
+      }
+    }
+  }
+
+  return nil
 }
 
 private func cleanOptional(_ value: String) -> String? {
