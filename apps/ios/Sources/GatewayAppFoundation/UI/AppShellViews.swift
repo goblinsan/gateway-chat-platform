@@ -1791,7 +1791,8 @@ struct ChatView: View {
     }
 
     let userMessage = ChatMessageRow(role: .user, content: trimmedPrompt)
-    let conversation = (messages + [userMessage]).map { message in
+    let conversationMessages = Array((messages + [userMessage]).suffix(20))
+    let conversation = conversationMessages.map { message in
       let role: String
       switch message.role {
       case .user:
@@ -1838,6 +1839,7 @@ struct ChatView: View {
     conversation: [GatewayConversationMessage],
     placeholderID: UUID
   ) async {
+    let shouldStreamResponse = conversation.count <= 1
     let progressTask = Task { @MainActor in
       let statuses = ["Waiting for the gateway…", "Model is working…", "Still working…"]
       for status in statuses {
@@ -1883,57 +1885,79 @@ struct ChatView: View {
     }
 
     do {
-      let stream = try await model.chatClient.streamPrompt(
-        baseURL: baseURL,
-        token: model.gatewayToken,
-        prompt: GatewayTypedPrompt(text: trimmedPrompt, agentID: resolvedAgentID),
-        messages: conversation,
-        threadID: threadID,
-        deviceName: model.gatewayDeviceName
-      )
-
-      var accumulated = ""
-      var accumulatedReasoning = ""
-      for try await event in stream {
-        switch event {
-        case let .token(tok):
-          accumulated += tok
-          if renderAssistantReply(accumulated) {
-            await Task.yield()
-          }
-        case let .reasoning(text):
-          accumulatedReasoning += text
-          if renderReasoning(accumulatedReasoning) {
-            await Task.yield()
-          }
-        case let .status(message):
-          if accumulated.isEmpty {
-            _ = renderAssistantReply(message, force: true)
-          }
-        case let .done(_, returnedThreadID, completionTokensPerSecond):
-          if let tid = returnedThreadID {
-            threadID = tid
-          }
-          if let completionTokensPerSecond,
-             let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
-            messages[idx].completionTokensPerSecond = completionTokensPerSecond
-          }
-          _ = renderReasoning(accumulatedReasoning, force: true)
-          collapseReasoning(for: placeholderID)
-        case let .error(msg):
-          errorMessage = msg
-        default:
-          break
+      if !shouldStreamResponse {
+        let result = try await model.chatClient.sendPrompt(
+          baseURL: baseURL,
+          token: model.gatewayToken,
+          prompt: GatewayTypedPrompt(text: trimmedPrompt, agentID: resolvedAgentID),
+          messages: conversation,
+          threadID: threadID,
+          deviceName: model.gatewayDeviceName
+        )
+        if let returnedThreadID = result.threadID {
+          threadID = returnedThreadID
         }
-      }
+        if let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
+          messages[idx].content = result.content
+        } else {
+          messages.append(ChatMessageRow(
+            role: .assistant,
+            content: result.content
+          ))
+        }
+      } else {
+        let stream = try await model.chatClient.streamPrompt(
+          baseURL: baseURL,
+          token: model.gatewayToken,
+          prompt: GatewayTypedPrompt(text: trimmedPrompt, agentID: resolvedAgentID),
+          messages: conversation,
+          threadID: threadID,
+          deviceName: model.gatewayDeviceName
+        )
 
-      _ = renderAssistantReply(accumulated, force: true)
-      _ = renderReasoning(accumulatedReasoning, force: true)
-      collapseReasoning(for: placeholderID)
+        var accumulated = ""
+        var accumulatedReasoning = ""
+        for try await event in stream {
+          switch event {
+          case let .token(tok):
+            accumulated += tok
+            if renderAssistantReply(accumulated) {
+              await Task.yield()
+            }
+          case let .reasoning(text):
+            accumulatedReasoning += text
+            if renderReasoning(accumulatedReasoning) {
+              await Task.yield()
+            }
+          case let .status(message):
+            if accumulated.isEmpty {
+              _ = renderAssistantReply(message, force: true)
+            }
+          case let .done(_, returnedThreadID, completionTokensPerSecond):
+            if let tid = returnedThreadID {
+              threadID = tid
+            }
+            if let completionTokensPerSecond,
+               let idx = messages.firstIndex(where: { $0.id == placeholderID }) {
+              messages[idx].completionTokensPerSecond = completionTokensPerSecond
+            }
+            _ = renderReasoning(accumulatedReasoning, force: true)
+            collapseReasoning(for: placeholderID)
+          case let .error(msg):
+            errorMessage = msg
+          default:
+            break
+          }
+        }
 
-      // Remove the placeholder if nothing was accumulated (e.g. empty response).
-      if accumulated.isEmpty {
-        messages.removeAll { $0.id == placeholderID }
+        _ = renderAssistantReply(accumulated, force: true)
+        _ = renderReasoning(accumulatedReasoning, force: true)
+        collapseReasoning(for: placeholderID)
+
+        // Remove the placeholder if nothing was accumulated (e.g. empty response).
+        if accumulated.isEmpty {
+          messages.removeAll { $0.id == placeholderID }
+        }
       }
     } catch is CancellationError {
       // User cancelled: retain partial content, remove empty placeholder.
