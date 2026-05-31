@@ -344,6 +344,9 @@ public struct GatewayNotificationSummary: Decodable, Equatable, Identifiable, Se
     case let value as NSString:
       return value as String
     case let value as NSNumber:
+      if CFGetTypeID(value) == CFBooleanGetTypeID() {
+        return value.boolValue ? "true" : "false"
+      }
       return value.stringValue
     case nil, is NSNull:
       return nil

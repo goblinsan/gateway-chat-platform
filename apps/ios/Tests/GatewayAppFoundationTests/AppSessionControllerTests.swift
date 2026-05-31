@@ -35,6 +35,7 @@ final class AppSessionControllerTests: XCTestCase {
     let health = MockHealthChecker(response: .init(status: "ok"))
     let session = AppSessionController(configurationStore: configStore, tokenStore: tokenStore, healthChecker: health)
 
+    await session.loadPersistedState()
     let status = await session.runHealthCheck()
 
     XCTAssertEqual(status, .connected)
@@ -46,6 +47,7 @@ final class AppSessionControllerTests: XCTestCase {
     let health = MockHealthChecker(response: .init(status: "degraded"))
     let session = AppSessionController(configurationStore: configStore, tokenStore: tokenStore, healthChecker: health)
 
+    await session.loadPersistedState()
     let status = await session.runHealthCheck()
 
     XCTAssertEqual(status, .connected)
@@ -63,6 +65,7 @@ final class AppSessionControllerTests: XCTestCase {
       identityChecker: identity
     )
 
+    await session.loadPersistedState()
     _ = await session.runHealthCheck()
 
     XCTAssertEqual(session.connectionIdentity, "me@example.com")
@@ -80,6 +83,7 @@ final class AppSessionControllerTests: XCTestCase {
       identityChecker: identity
     )
 
+    await session.loadPersistedState()
     let status = await session.runHealthCheck()
 
     guard case let .failed(message) = status else {
@@ -100,6 +104,7 @@ final class AppSessionControllerTests: XCTestCase {
       identityChecker: identity
     )
 
+    await session.loadPersistedState()
     _ = await session.runHealthCheck()
     session.replaceToken("new-token")
 

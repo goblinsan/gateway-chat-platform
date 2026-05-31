@@ -21,6 +21,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test GatewayAppFoundation
+        working-directory: apps/ios
+        run: swift test
       - name: Build GatewayAppFoundation for iOS Simulator
         working-directory: apps/ios
         run: xcodebuild -scheme GatewayAppFoundation -destination 'generic/platform=iOS Simulator' build
