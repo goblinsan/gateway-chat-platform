@@ -8,6 +8,7 @@ import type {
   PlanMetric,
   PlanMilestone,
   PlanStatus,
+  PlanTaskStatus,
   PlanTask,
   UpdatePlanMilestoneRequest,
   UpdatePlanRequest,
@@ -26,6 +27,7 @@ import {
 } from '../services/agentServiceClient'
 
 const STATUS_VALUES: PlanStatus[] = ['on_track', 'at_risk', 'blocked', 'complete']
+const TASK_STATUS_VALUES: PlanTaskStatus[] = ['todo', 'in_progress', 'complete', 'on_hold', 'blocked']
 
 function isStatus(value: unknown): value is PlanStatus {
   return typeof value === 'string' && STATUS_VALUES.includes(value as PlanStatus)
@@ -80,6 +82,29 @@ function planStatusFromStore(status: string): PlanStatus {
   }
 }
 
+function taskStatusFromStore(status: string): PlanTaskStatus {
+  switch (status.trim().toLowerCase()) {
+    case 'done':
+    case 'complete':
+    case 'completed':
+      return 'complete'
+    case 'blocked':
+      return 'blocked'
+    case 'paused':
+    case 'on_hold':
+    case 'hold':
+      return 'on_hold'
+    case 'in_progress':
+    case 'active':
+    case 'doing':
+      return 'in_progress'
+    case 'todo':
+    case 'to_do':
+    default:
+      return 'todo'
+  }
+}
+
 function storeStatusFromPlan(status: PlanStatus | undefined, fallback = 'active'): string {
   switch (status) {
     case 'complete':
@@ -95,8 +120,25 @@ function storeStatusFromPlan(status: PlanStatus | undefined, fallback = 'active'
   }
 }
 
+function storeStatusFromTask(status: PlanTaskStatus | undefined, fallback = 'todo'): string {
+  switch (status) {
+    case 'complete':
+      return 'done'
+    case 'blocked':
+      return 'blocked'
+    case 'on_hold':
+      return 'paused'
+    case 'in_progress':
+      return 'active'
+    case 'todo':
+      return 'todo'
+    default:
+      return fallback
+  }
+}
+
 function taskProgressFromStore(task: AgentServicePlanTask): number {
-  if (planStatusFromStore(task.status) === 'complete') return 100
+  if (taskStatusFromStore(task.status) === 'complete') return 100
   return 0
 }
 
@@ -115,7 +157,7 @@ function toTaskModel(task: AgentServicePlanTask, milestoneId: string, orderIndex
     milestoneId,
     title: task.title,
     notes: task.notes || undefined,
-    status: planStatusFromStore(task.status),
+    status: taskStatusFromStore(task.status),
     progressPercent: taskProgressFromStore(task),
     orderIndex,
     createdAt: updatedAt,
@@ -392,6 +434,13 @@ export default async function planRoutes(app: FastifyInstance) {
         if (req.body.reviewCadence !== undefined) plan.review_cadence = req.body.reviewCadence?.trim() || ''
         if (req.body.tags !== undefined) plan.tags = toStringArray(req.body.tags)
         if (req.body.sourceSystems !== undefined) plan.data_sources = toStringArray(req.body.sourceSystems)
+        if (req.body.objectives !== undefined) plan.objectives = toStringArray(req.body.objectives)
+        if (req.body.principles !== undefined) plan.principles = toStringArray(req.body.principles)
+        if (req.body.trackedMetrics !== undefined) plan.tracked_metrics = req.body.trackedMetrics ?? []
+        if (req.body.baselineFacts !== undefined) plan.baseline_facts = req.body.baselineFacts ?? []
+        if (req.body.successCriteria !== undefined) plan.success_criteria = toStringArray(req.body.successCriteria)
+        if (req.body.cadence !== undefined) plan.cadence = req.body.cadence ?? []
+        if (req.body.supportingSections !== undefined) plan.supporting_sections = req.body.supportingSections ?? []
         if (req.body.metrics !== undefined) plan.metrics = toMetricsObject(req.body.metrics)
         const updated = await persistPlan(req.userId, plan)
         return reply.send({ plan: toPlanModel(updated) })
@@ -530,7 +579,7 @@ export default async function planRoutes(app: FastifyInstance) {
         const task: AgentServicePlanTask = {
           id: randomUUID(),
           title: req.body.title.trim(),
-          status: storeStatusFromPlan(req.body.status, 'todo'),
+          status: storeStatusFromTask(req.body.status, 'todo'),
           notes: req.body.notes?.trim() || '',
         }
         const tasks = milestone.tasks ?? []
@@ -566,7 +615,7 @@ export default async function planRoutes(app: FastifyInstance) {
         const task = tasks[taskIndex]
         if (req.body.title !== undefined) task.title = req.body.title.trim()
         if (req.body.notes !== undefined) task.notes = req.body.notes?.trim() || ''
-        if (req.body.status !== undefined) task.status = storeStatusFromPlan(req.body.status, task.status || 'todo')
+        if (req.body.status !== undefined) task.status = storeStatusFromTask(req.body.status, task.status || 'todo')
         if (req.body.orderIndex !== undefined) {
           tasks.splice(taskIndex, 1)
           const insertAt = Math.min(Math.max(req.body.orderIndex, 0), tasks.length)

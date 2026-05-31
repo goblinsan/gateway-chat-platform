@@ -1,4 +1,5 @@
 export type PlanStatus = 'on_track' | 'at_risk' | 'blocked' | 'complete'
+export type PlanTaskStatus = 'todo' | 'in_progress' | 'complete' | 'on_hold' | 'blocked'
 
 export interface PlanMetric {
   label: string
@@ -45,7 +46,7 @@ export interface PlanTask {
   milestoneId: string
   title: string
   notes?: string
-  status: PlanStatus
+  status: PlanTaskStatus
   progressPercent: number
   orderIndex: number
   createdAt: string
@@ -133,7 +134,7 @@ export type UpdatePlanMilestoneRequest = Partial<CreatePlanMilestoneRequest>
 export interface CreatePlanTaskRequest {
   title: string
   notes?: string
-  status?: PlanStatus
+  status?: PlanTaskStatus
   progressPercent?: number
   orderIndex?: number
 }

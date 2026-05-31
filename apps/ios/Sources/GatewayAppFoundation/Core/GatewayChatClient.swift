@@ -542,6 +542,29 @@ public enum GatewayPlanStatus: String, Codable, Equatable, CaseIterable, Sendabl
   }
 }
 
+public enum GatewayPlanTaskStatus: String, Codable, Equatable, CaseIterable, Sendable {
+  case todo
+  case inProgress = "in_progress"
+  case complete
+  case onHold = "on_hold"
+  case blocked
+
+  public var label: String {
+    switch self {
+    case .todo:
+      return "To do"
+    case .inProgress:
+      return "In progress"
+    case .complete:
+      return "Complete"
+    case .onHold:
+      return "On hold"
+    case .blocked:
+      return "Blocked"
+    }
+  }
+}
+
 public struct GatewayPlanMetric: Codable, Equatable, Sendable {
   public let label: String
   public let value: String
@@ -587,7 +610,7 @@ public struct GatewayPlanTask: Codable, Equatable, Identifiable, Sendable {
   public let milestoneId: String
   public let title: String
   public let notes: String?
-  public let status: GatewayPlanStatus
+  public let status: GatewayPlanTaskStatus
   public let progressPercent: Int
   public let orderIndex: Int
   public let createdAt: String
@@ -630,6 +653,106 @@ public struct GatewayPlanGoal: Codable, Equatable, Identifiable, Sendable {
   public let createdAt: String
   public let updatedAt: String
   public let milestones: [GatewayPlanMilestone]
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case userId
+    case title
+    case vision
+    case status
+    case progressPercent
+    case category
+    case objectives
+    case principles
+    case reviewCadence
+    case nextReviewAt
+    case tags
+    case sourceSystems
+    case metrics
+    case trackedMetrics
+    case baselineFacts
+    case successCriteria
+    case cadence
+    case supportingSections
+    case createdAt
+    case updatedAt
+    case milestones
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(String.self, forKey: .id)
+    userId = try container.decode(String.self, forKey: .userId)
+    title = try container.decode(String.self, forKey: .title)
+    vision = try container.decodeIfPresent(String.self, forKey: .vision)
+    status = try container.decode(GatewayPlanStatus.self, forKey: .status)
+    progressPercent = try container.decode(Int.self, forKey: .progressPercent)
+    category = try container.decodeIfPresent(String.self, forKey: .category)
+    objectives = try container.decodeIfPresent([String].self, forKey: .objectives) ?? []
+    principles = try container.decodeIfPresent([String].self, forKey: .principles) ?? []
+    reviewCadence = try container.decodeIfPresent(String.self, forKey: .reviewCadence)
+    nextReviewAt = try container.decodeIfPresent(String.self, forKey: .nextReviewAt)
+    tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+    sourceSystems = try container.decodeIfPresent([String].self, forKey: .sourceSystems) ?? []
+    metrics = try container.decodeIfPresent([GatewayPlanMetric].self, forKey: .metrics) ?? []
+    trackedMetrics = try container.decodeIfPresent([GatewayPlanTrackedMetric].self, forKey: .trackedMetrics) ?? []
+    baselineFacts = try container.decodeIfPresent([GatewayPlanFact].self, forKey: .baselineFacts) ?? []
+    successCriteria = try container.decodeIfPresent([String].self, forKey: .successCriteria) ?? []
+    cadence = try container.decodeIfPresent([GatewayPlanCadenceEntry].self, forKey: .cadence) ?? []
+    supportingSections = try container.decodeIfPresent([GatewayPlanSupportingSection].self, forKey: .supportingSections) ?? []
+    createdAt = try container.decode(String.self, forKey: .createdAt)
+    updatedAt = try container.decode(String.self, forKey: .updatedAt)
+    milestones = try container.decodeIfPresent([GatewayPlanMilestone].self, forKey: .milestones) ?? []
+  }
+}
+
+public struct GatewayPlanDetailsUpdate: Encodable, Sendable {
+  public var title: String?
+  public var vision: String?
+  public var category: String?
+  public var objectives: [String]?
+  public var principles: [String]?
+  public var reviewCadence: String?
+  public var tags: [String]?
+  public var sourceSystems: [String]?
+  public var metrics: [GatewayPlanMetric]?
+  public var trackedMetrics: [GatewayPlanTrackedMetric]?
+  public var baselineFacts: [GatewayPlanFact]?
+  public var successCriteria: [String]?
+  public var cadence: [GatewayPlanCadenceEntry]?
+  public var supportingSections: [GatewayPlanSupportingSection]?
+
+  public init(
+    title: String? = nil,
+    vision: String? = nil,
+    category: String? = nil,
+    objectives: [String]? = nil,
+    principles: [String]? = nil,
+    reviewCadence: String? = nil,
+    tags: [String]? = nil,
+    sourceSystems: [String]? = nil,
+    metrics: [GatewayPlanMetric]? = nil,
+    trackedMetrics: [GatewayPlanTrackedMetric]? = nil,
+    baselineFacts: [GatewayPlanFact]? = nil,
+    successCriteria: [String]? = nil,
+    cadence: [GatewayPlanCadenceEntry]? = nil,
+    supportingSections: [GatewayPlanSupportingSection]? = nil
+  ) {
+    self.title = title
+    self.vision = vision
+    self.category = category
+    self.objectives = objectives
+    self.principles = principles
+    self.reviewCadence = reviewCadence
+    self.tags = tags
+    self.sourceSystems = sourceSystems
+    self.metrics = metrics
+    self.trackedMetrics = trackedMetrics
+    self.baselineFacts = baselineFacts
+    self.successCriteria = successCriteria
+    self.cadence = cadence
+    self.supportingSections = supportingSections
+  }
 }
 
 /// A single event emitted by the `/api/chat/stream` SSE endpoint.
@@ -815,12 +938,13 @@ public protocol GatewayChatServing: Sendable {
   func importPlanDocument(baseURL: URL, token: String?, title: String?, text: String, source: String?) async throws -> GatewayPlanGoal
   func createPlan(baseURL: URL, token: String?, title: String, vision: String?) async throws -> GatewayPlanGoal
   func updatePlan(baseURL: URL, token: String?, planID: String, title: String?, status: GatewayPlanStatus?) async throws -> GatewayPlanGoal
+  func updatePlanDetails(baseURL: URL, token: String?, planID: String, update: GatewayPlanDetailsUpdate) async throws -> GatewayPlanGoal
   func deletePlan(baseURL: URL, token: String?, planID: String) async throws
   func createMilestone(baseURL: URL, token: String?, planID: String, title: String) async throws
   func updateMilestone(baseURL: URL, token: String?, planID: String, milestoneID: String, status: GatewayPlanStatus) async throws
   func deleteMilestone(baseURL: URL, token: String?, planID: String, milestoneID: String) async throws
   func createTask(baseURL: URL, token: String?, planID: String, milestoneID: String, title: String) async throws
-  func updateTask(baseURL: URL, token: String?, planID: String, milestoneID: String, taskID: String, status: GatewayPlanStatus) async throws
+  func updateTask(baseURL: URL, token: String?, planID: String, milestoneID: String, taskID: String, status: GatewayPlanTaskStatus) async throws
   func deleteTask(baseURL: URL, token: String?, planID: String, milestoneID: String, taskID: String) async throws
 
   // MARK: - Threads (chat sync across devices)
@@ -1672,6 +1796,29 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     return decoded.plan
   }
 
+  public func updatePlanDetails(
+    baseURL: URL,
+    token: String?,
+    planID: String,
+    update: GatewayPlanDetailsUpdate
+  ) async throws -> GatewayPlanGoal {
+    guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)") else {
+      throw GatewayChatError.missingConfiguration
+    }
+    var request = URLRequest(url: url, timeoutInterval: requestTimeout)
+    request.httpMethod = "PUT"
+    addCommonHeaders(request: &request, token: token, deviceName: nil)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(update)
+    let (data, response) = try await performWithRetry(request)
+    let httpResponse = try validateHTTPResponse(response)
+    guard (200..<300).contains(httpResponse.statusCode) else {
+      throw GatewayChatError.httpError(httpResponse.statusCode, parseErrorMessage(from: data))
+    }
+    let decoded = try JSONDecoder().decode(PlanResponse.self, from: data)
+    return decoded.plan
+  }
+
   public func deletePlan(baseURL: URL, token: String?, planID: String) async throws {
     guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)") else {
       throw GatewayChatError.missingConfiguration
@@ -1771,7 +1918,7 @@ public final class GatewayChatClient: GatewayChatServing, Sendable {
     planID: String,
     milestoneID: String,
     taskID: String,
-    status: GatewayPlanStatus
+    status: GatewayPlanTaskStatus
   ) async throws {
     guard let url = endpointURL(baseURL: baseURL, endpointPath: "/api/plans/\(planID)/milestones/\(milestoneID)/tasks/\(taskID)") else {
       throw GatewayChatError.missingConfiguration
