@@ -37,18 +37,8 @@ public final class AppSessionController: @unchecked Sendable {
   public func loadPersistedState() async {
     guard !hasLoadedPersistedState else { return }
 
-    let configurationStore = self.configurationStore
-    let tokenStore = self.tokenStore
-    let snapshot = await withCheckedContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        let configuration = configurationStore.load()
-        let token = tokenStore.readToken()
-        continuation.resume(returning: (configuration, token))
-      }
-    }
-
-    configuration = snapshot.0
-    storedToken = snapshot.1
+    configuration = configurationStore.load()
+    storedToken = tokenStore.readToken()
     hasLoadedPersistedState = true
   }
 
