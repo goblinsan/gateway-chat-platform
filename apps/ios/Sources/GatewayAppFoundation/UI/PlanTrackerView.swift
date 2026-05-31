@@ -87,7 +87,7 @@ private struct PlanSectionEditSheet: View {
 }
 
 private enum PlannerHorizon: String, CaseIterable, Identifiable {
-  case nextDays
+  case day
   case week
   case month
   case year
@@ -96,7 +96,7 @@ private enum PlannerHorizon: String, CaseIterable, Identifiable {
 
   var title: String {
     switch self {
-    case .nextDays: return "Next Days"
+    case .day: return "Day"
     case .week: return "Week"
     case .month: return "Month"
     case .year: return "Year"
@@ -105,7 +105,7 @@ private enum PlannerHorizon: String, CaseIterable, Identifiable {
 
   var systemImage: String {
     switch self {
-    case .nextDays: return "calendar.badge.clock"
+    case .day: return "calendar.badge.clock"
     case .week: return "calendar"
     case .month: return "calendar.circle"
     case .year: return "chart.bar.xaxis"
@@ -215,6 +215,64 @@ private struct PlannerTaskRow: View {
   }
 }
 
+private struct DateNavigator: View {
+  let horizon: PlannerHorizon
+  let selectedDate: Date
+  let onPrevious: () -> Void
+  let onNext: () -> Void
+
+  private var title: String {
+    let calendar = Calendar(identifier: .gregorian)
+    switch horizon {
+    case .day:
+      let formatter = DateFormatter()
+      formatter.calendar = calendar
+      formatter.timeZone = .current
+      formatter.dateStyle = .full
+      return formatter.string(from: selectedDate)
+    case .week:
+      let interval = calendar.dateInterval(of: .weekOfYear, for: selectedDate)
+      let formatter = DateFormatter()
+      formatter.calendar = calendar
+      formatter.timeZone = .current
+      formatter.dateStyle = .medium
+      if let interval {
+        return "\(formatter.string(from: interval.start)) – \(formatter.string(from: interval.end.addingTimeInterval(-86400)))"
+      }
+      return formatter.string(from: selectedDate)
+    case .month:
+      let formatter = DateFormatter()
+      formatter.calendar = calendar
+      formatter.timeZone = .current
+      formatter.dateFormat = "LLLL yyyy"
+      return formatter.string(from: selectedDate)
+    case .year:
+      let formatter = DateFormatter()
+      formatter.calendar = calendar
+      formatter.timeZone = .current
+      formatter.dateFormat = "yyyy"
+      return formatter.string(from: selectedDate)
+    }
+  }
+
+  var body: some View {
+    HStack {
+      Button(action: onPrevious) {
+        Image(systemName: "chevron.left")
+      }
+      Spacer()
+      Text(title)
+        .font(.subheadline.weight(.semibold))
+        .multilineTextAlignment(.center)
+      Spacer()
+      Button(action: onNext) {
+        Image(systemName: "chevron.right")
+      }
+    }
+    .buttonStyle(.plain)
+  }
+}
+
 struct LivePlanTrackerView: View {
   @ObservedObject var model: GatewayAppViewModel
   @State private var plans: [GatewayPlanGoal] = []
@@ -222,6 +280,14 @@ struct LivePlanTrackerView: View {
   @State private var isSyncingHealth = false
   @State private var errorMessage: String?
   @State private var textEntryContext: TextEntryContext?
+  @State private var selectedDate = Date()
+  @State private var plannerHorizon: PlannerHorizon = .day
+
+  private var calendar: Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = .current
+    return calendar
+  }
 
   private var allTaskContexts: [PlannerTaskContext] {
     plans.flatMap { plan in
@@ -241,8 +307,12 @@ struct LivePlanTrackerView: View {
     }
   }
 
-  private var todayTasks: [PlannerTaskContext] {
-    allTaskContexts.filter { $0.task.status != .complete && $0.task.status != .onHold }
+  private var dayTasks: [PlannerTaskContext] {
+    tasks(for: .day)
+  }
+
+  private var daySectionTitle: String {
+    calendar.isDateInToday(selectedDate) ? "Today" : "Day"
   }
 
   var body: some View {
@@ -258,42 +328,70 @@ struct LivePlanTrackerView: View {
           )
         } else {
           List {
-            Section("Today") {
-              if todayTasks.isEmpty {
-                Text("No active tasks for today.")
+            Section(daySectionTitle) {
+              DateNavigator(
+                horizon: .day,
+                selectedDate: selectedDate,
+                onPrevious: { shiftSelection(by: -1, for: .day) },
+                onNext: { shiftSelection(by: 1, for: .day) }
+              )
+              if dayTasks.isEmpty {
+                Text("No tasks matched for \(formattedSelectedDate(style: .day)).")
                   .foregroundStyle(.secondary)
               } else {
-                ForEach(todayTasks) { context in
+                ForEach(dayTasks) { context in
                   NavigationLink {
                     PlanTaskDetailView(
                       model: model,
                       context: context,
                       onReload: { Task { await loadPlans() } },
-                      onStatusChange: { status in updateTask(context, status: status) }
+                      onStatusChange: { status in updateTask(context, status: status) },
+                      onDelete: { deleteTask(context) }
                     )
                   } label: {
                     PlannerTaskRow(context: context) { status in
                       updateTask(context, status: status)
                     }
                   }
+                  .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                      deleteTask(context)
+                    } label: {
+                      Label("Delete", systemImage: "trash")
+                    }
+                    Button {
+                      updateTask(context, status: .onHold)
+                    } label: {
+                      Label("Won't do", systemImage: "xmark.circle")
+                    }
+                    .tint(.orange)
+                  }
                 }
               }
             }
 
             Section("Views") {
-              ForEach(PlannerHorizon.allCases) { horizon in
-                NavigationLink {
-                  PlannerHorizonView(
-                    model: model,
-                    horizon: horizon,
-                    plans: plans,
-                    tasks: tasks(for: horizon),
-                    onReload: { Task { await loadPlans() } },
-                    onStatusChange: updateTask
-                  )
-                } label: {
-                  Label(horizon.title, systemImage: horizon.systemImage)
+              Picker("Planning horizon", selection: $plannerHorizon) {
+                ForEach(PlannerHorizon.allCases) { horizon in
+                  Label(horizon.title, systemImage: horizon.systemImage).tag(horizon)
                 }
+              }
+              .pickerStyle(.segmented)
+
+              NavigationLink {
+                PlannerHorizonView(
+                  model: model,
+                  horizon: plannerHorizon,
+                  selectedDate: selectedDate,
+                  plans: plans,
+                  tasks: tasks(for: plannerHorizon),
+                  onReload: { Task { await loadPlans() } },
+                  onStatusChange: updateTask,
+                  onDelete: deleteTask,
+                  onShiftDate: shiftSelection
+                )
+              } label: {
+                Label("\(plannerHorizon.title) View", systemImage: plannerHorizon.systemImage)
               }
             }
 
@@ -305,7 +403,8 @@ struct LivePlanTrackerView: View {
                     plan: plan,
                     onReload: { Task { await loadPlans() } },
                     onUpdatePlan: updatePlanDetails,
-                    onStatusChange: updateTask
+                    onStatusChange: updateTask,
+                    onDeleteTask: deleteTask
                   )
                 } label: {
                   PlanSummaryRow(plan: plan)
@@ -408,12 +507,20 @@ struct LivePlanTrackerView: View {
 
   private func tasks(for horizon: PlannerHorizon) -> [PlannerTaskContext] {
     switch horizon {
-    case .nextDays:
-      return allTaskContexts.filter { $0.task.status != .complete }
+    case .day:
+      return allTaskContexts.filter { context in
+        guard context.task.status != .complete else { return false }
+        return matches(context: context, selectedDate: selectedDate, horizon: .day)
+      }
     case .week:
-      return allTaskContexts.filter { $0.task.status != .complete }
+      return allTaskContexts.filter { context in
+        guard context.task.status != .complete else { return false }
+        return matches(context: context, selectedDate: selectedDate, horizon: .week)
+      }
     case .month:
-      return allTaskContexts
+      return allTaskContexts.filter { context in
+        context.task.status != .complete || matches(context: context, selectedDate: selectedDate, horizon: .month)
+      }
     case .year:
       return allTaskContexts
     }
@@ -491,6 +598,20 @@ struct LivePlanTrackerView: View {
     }
   }
 
+  private func deleteTask(_ context: PlannerTaskContext) {
+    Task {
+      await withMutation {
+        try await model.chatClient.deleteTask(
+          baseURL: try baseURL(),
+          token: model.gatewayToken,
+          planID: context.plan.id,
+          milestoneID: context.milestone.id,
+          taskID: context.task.id
+        )
+      }
+    }
+  }
+
   private func updatePlanDetails(planID: String, update: GatewayPlanDetailsUpdate) {
     Task {
       await withMutation {
@@ -514,26 +635,81 @@ struct LivePlanTrackerView: View {
       await loadPlans()
     }
   }
+
+  private func shiftSelection(by amount: Int, for horizon: PlannerHorizon) {
+    let component: Calendar.Component
+    switch horizon {
+    case .day:
+      component = .day
+    case .week:
+      component = .weekOfYear
+    case .month:
+      component = .month
+    case .year:
+      component = .year
+    }
+    if let next = calendar.date(byAdding: component, value: amount, to: selectedDate) {
+      selectedDate = next
+    }
+  }
+
+  private func formattedSelectedDate(style: PlannerHorizon) -> String {
+    let formatter = DateFormatter()
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    switch style {
+    case .day:
+      formatter.dateStyle = .full
+      return formatter.string(from: selectedDate)
+    case .week:
+      let interval = calendar.dateInterval(of: .weekOfYear, for: selectedDate)
+      let short = DateFormatter()
+      short.calendar = calendar
+      short.timeZone = calendar.timeZone
+      short.dateStyle = .medium
+      if let interval {
+        return "\(short.string(from: interval.start)) – \(short.string(from: interval.end.addingTimeInterval(-86400)))"
+      }
+      return short.string(from: selectedDate)
+    case .month:
+      formatter.dateFormat = "LLLL yyyy"
+      return formatter.string(from: selectedDate)
+    case .year:
+      formatter.dateFormat = "yyyy"
+      return formatter.string(from: selectedDate)
+    }
+  }
 }
 
 private struct PlannerHorizonView: View {
   let model: GatewayAppViewModel
   let horizon: PlannerHorizon
+  let selectedDate: Date
   let plans: [GatewayPlanGoal]
   let tasks: [PlannerTaskContext]
   let onReload: () -> Void
   let onStatusChange: (PlannerTaskContext, GatewayPlanTaskStatus) -> Void
+  let onDelete: (PlannerTaskContext) -> Void
+  let onShiftDate: (Int, PlannerHorizon) -> Void
 
   var body: some View {
     List {
+      Section {
+        DateNavigator(
+          horizon: horizon,
+          selectedDate: selectedDate,
+          onPrevious: { onShiftDate(-1, horizon) },
+          onNext: { onShiftDate(1, horizon) }
+        )
+      }
       switch horizon {
-      case .nextDays:
-        taskListSection(title: "Next Days", tasks: tasks)
+      case .day:
+        taskListSection(title: "Day", tasks: tasks)
       case .week:
-        ForEach(GatewayPlanTaskStatus.allCases, id: \.self) { status in
-          let matching = tasks.filter { $0.task.status == status }
+        ForEach(orderedWeekdays(for: selectedDate), id: \.self) { weekday in
+          let matching = tasks.filter { weekdaySymbol(for: $0) == weekday }
           if !matching.isEmpty {
-            taskListSection(title: status.label, tasks: matching)
+            taskListSection(title: weekday, tasks: matching)
           }
         }
       case .month:
@@ -546,7 +722,8 @@ private struct PlannerHorizonView: View {
                   plan: plan,
                   milestone: milestone,
                   onReload: onReload,
-                  onStatusChange: onStatusChange
+                  onStatusChange: onStatusChange,
+                  onDelete: onDelete
                 )
               } label: {
                 MilestoneSummaryRow(milestone: milestone)
@@ -562,7 +739,8 @@ private struct PlannerHorizonView: View {
               plan: plan,
               onReload: onReload,
               onUpdatePlan: { _, _ in },
-              onStatusChange: onStatusChange
+              onStatusChange: onStatusChange,
+              onDeleteTask: onDelete
             )
           } label: {
             PlanSummaryRow(plan: plan)
@@ -586,12 +764,26 @@ private struct PlannerHorizonView: View {
               model: model,
               context: context,
               onReload: onReload,
-              onStatusChange: { status in onStatusChange(context, status) }
+              onStatusChange: { status in onStatusChange(context, status) },
+              onDelete: { onDelete(context) }
             )
           } label: {
             PlannerTaskRow(context: context) { status in
               onStatusChange(context, status)
             }
+          }
+          .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+              onDelete(context)
+            } label: {
+              Label("Delete", systemImage: "trash")
+            }
+            Button {
+              onStatusChange(context, .onHold)
+            } label: {
+              Label("Won't do", systemImage: "xmark.circle")
+            }
+            .tint(.orange)
           }
         }
       }
@@ -644,6 +836,8 @@ private struct PlanTaskDetailView: View {
   let context: PlannerTaskContext
   let onReload: () -> Void
   let onStatusChange: (GatewayPlanTaskStatus) -> Void
+  let onDelete: () -> Void
+  @Environment(\.dismiss) private var dismiss
 
   var body: some View {
     List {
@@ -654,41 +848,59 @@ private struct PlanTaskDetailView: View {
         if let notes = context.task.notes, !notes.isEmpty {
           Text(notes)
         }
+        Button("Mark Won't do") {
+          onStatusChange(.onHold)
+        }
+        .foregroundStyle(.orange)
+        Button("Delete task", role: .destructive) {
+          onDelete()
+          dismiss()
+        }
       }
 
       Section("Milestone") {
         NavigationLink {
-          PlanMilestoneDetailView(
-            model: model,
-            plan: context.plan,
-            milestone: context.milestone,
-            onReload: onReload,
-            onStatusChange: { taskContext, status in
-              if taskContext.task.id == context.task.id {
-                onStatusChange(status)
+            PlanMilestoneDetailView(
+              model: model,
+              plan: context.plan,
+              milestone: context.milestone,
+              onReload: onReload,
+              onStatusChange: { taskContext, status in
+                if taskContext.task.id == context.task.id {
+                  onStatusChange(status)
+                }
+              },
+              onDelete: { taskContext in
+                if taskContext.task.id == context.task.id {
+                  onDelete()
+                }
               }
-            }
-          )
-        } label: {
-          MilestoneSummaryRow(milestone: context.milestone)
+            )
+          } label: {
+            MilestoneSummaryRow(milestone: context.milestone)
         }
       }
 
       Section("Goal") {
         NavigationLink {
-          PlanGoalDetailView(
-            model: model,
-            plan: context.plan,
-            onReload: onReload,
-            onUpdatePlan: { _, _ in },
-            onStatusChange: { taskContext, status in
-              if taskContext.task.id == context.task.id {
-                onStatusChange(status)
+            PlanGoalDetailView(
+              model: model,
+              plan: context.plan,
+              onReload: onReload,
+              onUpdatePlan: { _, _ in },
+              onStatusChange: { taskContext, status in
+                if taskContext.task.id == context.task.id {
+                  onStatusChange(status)
+                }
+              },
+              onDeleteTask: { taskContext in
+                if taskContext.task.id == context.task.id {
+                  onDelete()
+                }
               }
-            }
-          )
-        } label: {
-          PlanSummaryRow(plan: context.plan)
+            )
+          } label: {
+            PlanSummaryRow(plan: context.plan)
         }
       }
     }
@@ -702,6 +914,7 @@ private struct PlanMilestoneDetailView: View {
   let milestone: GatewayPlanMilestone
   let onReload: () -> Void
   let onStatusChange: (PlannerTaskContext, GatewayPlanTaskStatus) -> Void
+  let onDelete: (PlannerTaskContext) -> Void
 
   var body: some View {
     List {
@@ -722,27 +935,42 @@ private struct PlanMilestoneDetailView: View {
               model: model,
               context: context,
               onReload: onReload,
-              onStatusChange: { status in onStatusChange(context, status) }
+              onStatusChange: { status in onStatusChange(context, status) },
+              onDelete: { onDelete(context) }
             )
           } label: {
             PlannerTaskRow(context: context) { status in
               onStatusChange(context, status)
             }
           }
+          .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+              onDelete(context)
+            } label: {
+              Label("Delete", systemImage: "trash")
+            }
+            Button {
+              onStatusChange(context, .onHold)
+            } label: {
+              Label("Won't do", systemImage: "xmark.circle")
+            }
+            .tint(.orange)
+          }
         }
       }
 
       Section("Goal") {
         NavigationLink {
-          PlanGoalDetailView(
-            model: model,
-            plan: plan,
-            onReload: onReload,
-            onUpdatePlan: { _, _ in },
-            onStatusChange: onStatusChange
-          )
-        } label: {
-          PlanSummaryRow(plan: plan)
+            PlanGoalDetailView(
+              model: model,
+              plan: plan,
+              onReload: onReload,
+              onUpdatePlan: { _, _ in },
+              onStatusChange: onStatusChange,
+              onDeleteTask: onDelete
+            )
+          } label: {
+            PlanSummaryRow(plan: plan)
         }
       }
     }
@@ -756,6 +984,7 @@ private struct PlanGoalDetailView: View {
   let onReload: () -> Void
   let onUpdatePlan: (String, GatewayPlanDetailsUpdate) -> Void
   let onStatusChange: (PlannerTaskContext, GatewayPlanTaskStatus) -> Void
+  let onDeleteTask: (PlannerTaskContext) -> Void
 
   @State private var editContext: PlanSectionEditContext?
 
@@ -828,7 +1057,8 @@ private struct PlanGoalDetailView: View {
               plan: plan,
               milestone: milestone,
               onReload: onReload,
-              onStatusChange: onStatusChange
+              onStatusChange: onStatusChange,
+              onDelete: onDeleteTask
             )
           } label: {
             MilestoneSummaryRow(milestone: milestone)
@@ -879,6 +1109,69 @@ private func statusOrder(_ status: GatewayPlanTaskStatus) -> Int {
   case .onHold: return 3
   case .blocked: return 4
   }
+}
+
+private func weekdaySymbol(for context: PlannerTaskContext) -> String? {
+  let taskTitle = context.task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+  let candidates = Calendar(identifier: .gregorian).weekdaySymbols
+  for symbol in candidates {
+    if taskTitle.lowercased().hasPrefix(symbol.lowercased() + ":") {
+      return symbol
+    }
+  }
+
+  for cadence in context.plan.cadence {
+    guard let day = cadence.day?.trimmingCharacters(in: .whitespacesAndNewlines), !day.isEmpty else { continue }
+    let activity = cadence.activity.lowercased()
+    let milestone = context.milestone.title.lowercased()
+    let title = context.task.title.lowercased()
+    if title.contains(activity) || milestone.contains(activity) {
+      return normalizedWeekday(day)
+    }
+  }
+
+  return nil
+}
+
+private func matches(context: PlannerTaskContext, selectedDate: Date, horizon: PlannerHorizon) -> Bool {
+  switch horizon {
+  case .day:
+    return weekdaySymbol(for: context) == weekdayName(for: selectedDate)
+  case .week:
+    guard let weekday = weekdaySymbol(for: context) else { return false }
+    return orderedWeekdays(for: selectedDate).contains(weekday)
+  case .month:
+    return true
+  case .year:
+    return true
+  }
+}
+
+private func weekdayName(for date: Date) -> String {
+  let calendar = Calendar(identifier: .gregorian)
+  let weekdayIndex = calendar.component(.weekday, from: date) - 1
+  return calendar.weekdaySymbols[weekdayIndex]
+}
+
+private func orderedWeekdays(for date: Date) -> [String] {
+  let calendar = Calendar(identifier: .gregorian)
+  let firstWeekday = calendar.firstWeekday - 1
+  let symbols = calendar.weekdaySymbols
+  return Array(symbols[firstWeekday...]) + Array(symbols[..<firstWeekday])
+}
+
+private func normalizedWeekday(_ raw: String) -> String {
+  let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  let mapping: [String: String] = [
+    "mon": "Monday", "monday": "Monday",
+    "tue": "Tuesday", "tues": "Tuesday", "tuesday": "Tuesday",
+    "wed": "Wednesday", "wednesday": "Wednesday",
+    "thu": "Thursday", "thur": "Thursday", "thurs": "Thursday", "thursday": "Thursday",
+    "fri": "Friday", "friday": "Friday",
+    "sat": "Saturday", "saturday": "Saturday",
+    "sun": "Sunday", "sunday": "Sunday",
+  ]
+  return mapping[trimmed] ?? raw
 }
 
 private func cleanOptional(_ value: String) -> String? {

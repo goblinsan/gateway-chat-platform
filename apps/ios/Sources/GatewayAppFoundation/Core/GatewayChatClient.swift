@@ -561,7 +561,7 @@ public enum GatewayPlanTaskStatus: String, Codable, Equatable, CaseIterable, Sen
     case .complete:
       return "Complete"
     case .onHold:
-      return "On hold"
+      return "Won't do"
     case .blocked:
       return "Blocked"
     }
