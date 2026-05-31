@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import type { PlanGoal, PlanStatus } from '@gateway/shared'
+import type { PlanGoal, PlanStatus, PlanTaskStatus } from '@gateway/shared'
 import {
   listPlans,
   createPlan,
@@ -207,7 +207,7 @@ export function usePlans() {
                       id: tempId,
                       milestoneId,
                       title,
-                      status: 'on_track',
+                      status: 'todo',
                       progressPercent: 0,
                       orderIndex: milestone.tasks.length,
                       createdAt: now,
@@ -227,7 +227,7 @@ export function usePlans() {
     }
   }, [plans, refresh])
 
-  const updateTaskStatus = useCallback(async (planId: string, milestoneId: string, taskId: string, status: PlanStatus) => {
+  const updateTaskStatus = useCallback(async (planId: string, milestoneId: string, taskId: string, status: PlanTaskStatus) => {
     const previous = plans
     setPlans((prev) => prev.map((plan) => (
       plan.id !== planId

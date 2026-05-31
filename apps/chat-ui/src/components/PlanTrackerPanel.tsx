@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import type { PlanGoal, PlanStatus } from '@gateway/shared'
+import type { PlanGoal, PlanStatus, PlanTaskStatus } from '@gateway/shared'
 
 interface PlanTrackerPanelProps {
   isOpen: boolean
@@ -16,7 +16,7 @@ interface PlanTrackerPanelProps {
   onUpdateMilestoneStatus: (planId: string, milestoneId: string, status: PlanStatus) => Promise<void>
   onDeleteMilestone: (planId: string, milestoneId: string) => Promise<void>
   onAddTask: (input: { planId: string; milestoneId: string; title: string }) => Promise<void>
-  onUpdateTaskStatus: (planId: string, milestoneId: string, taskId: string, status: PlanStatus) => Promise<void>
+  onUpdateTaskStatus: (planId: string, milestoneId: string, taskId: string, status: PlanTaskStatus) => Promise<void>
   onDeleteTask: (planId: string, milestoneId: string, taskId: string) => Promise<void>
 }
 
@@ -34,12 +34,34 @@ const STATUS_CLASS: Record<PlanStatus, string> = {
   complete: 'bg-blue-900/40 text-blue-300 border-blue-700/50',
 }
 
+const TASK_STATUS_LABEL: Record<PlanTaskStatus, string> = {
+  todo: 'To do',
+  in_progress: 'In progress',
+  complete: 'Complete',
+  on_hold: 'On hold',
+  blocked: 'Blocked',
+}
+
+const TASK_STATUS_CLASS: Record<PlanTaskStatus, string> = {
+  todo: 'bg-gray-800/70 text-gray-300 border-gray-700/60',
+  in_progress: 'bg-blue-900/40 text-blue-300 border-blue-700/50',
+  complete: 'bg-green-900/40 text-green-300 border-green-700/50',
+  on_hold: 'bg-yellow-900/40 text-yellow-300 border-yellow-700/50',
+  blocked: 'bg-red-900/40 text-red-300 border-red-700/50',
+}
+
 const STATUS_VALUES: PlanStatus[] = ['on_track', 'at_risk', 'blocked', 'complete']
+const TASK_STATUS_VALUES: PlanTaskStatus[] = ['todo', 'in_progress', 'complete', 'on_hold', 'blocked']
 type PlanViewMode = 'list' | 'timeline'
 
 function nextStatus(current: PlanStatus): PlanStatus {
   const index = STATUS_VALUES.indexOf(current)
   return STATUS_VALUES[(index + 1) % STATUS_VALUES.length]
+}
+
+function nextTaskStatus(current: PlanTaskStatus): PlanTaskStatus {
+  const index = TASK_STATUS_VALUES.indexOf(current)
+  return TASK_STATUS_VALUES[(index + 1) % TASK_STATUS_VALUES.length]
 }
 
 function ProgressBar({ value }: { value: number }) {
@@ -225,7 +247,7 @@ export default function PlanTrackerPanel({
               <ul className="mt-2 space-y-1 text-[11px] text-gray-400">
                 {milestone.tasks.map((task) => (
                   <li key={task.id}>
-                    <span className={`inline-block mr-2 rounded px-1.5 py-0.5 border ${STATUS_CLASS[task.status]}`}>{STATUS_LABEL[task.status]}</span>
+                    <span className={`inline-block mr-2 rounded px-1.5 py-0.5 border ${TASK_STATUS_CLASS[task.status]}`}>{TASK_STATUS_LABEL[task.status]}</span>
                     {task.title}
                   </li>
                 ))}
@@ -431,10 +453,10 @@ export default function PlanTrackerPanel({
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            className={`px-1.5 py-0.5 rounded border ${STATUS_CLASS[task.status]}`}
-                            onClick={() => { void onUpdateTaskStatus(plan.id, milestone.id, task.id, nextStatus(task.status)) }}
+                            className={`px-1.5 py-0.5 rounded border ${TASK_STATUS_CLASS[task.status]}`}
+                            onClick={() => { void onUpdateTaskStatus(plan.id, milestone.id, task.id, nextTaskStatus(task.status)) }}
                           >
-                            {STATUS_LABEL[task.status]}
+                            {TASK_STATUS_LABEL[task.status]}
                           </button>
                           <button
                             type="button"

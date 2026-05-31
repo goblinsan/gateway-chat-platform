@@ -33,5 +33,5 @@ jobs:
       - run: corepack enable
       - run: corepack prepare pnpm@9 --activate
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @gateway/chat-ui typecheck
+      - run: pnpm typecheck
       - run: /opt/gateway-control-plane/deploy/bin/deploy-app.sh --config /opt/gateway-control-plane/configs/gateway.config.json --app gateway-chat-platform --revision "${DEPLOY_REVISION}"
