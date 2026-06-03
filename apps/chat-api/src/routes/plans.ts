@@ -4,6 +4,8 @@ import type {
   CreatePlanMilestoneRequest,
   CreatePlanRequest,
   CreatePlanTaskRequest,
+  ExportPlanResponse,
+  ImportPlanRequest,
   PlanGoal,
   PlanMetric,
   PlanMilestone,
@@ -27,11 +29,6 @@ import {
 } from '../services/agentServiceClient'
 
 const STATUS_VALUES: PlanStatus[] = ['on_track', 'at_risk', 'blocked', 'complete']
-const TASK_STATUS_VALUES: PlanTaskStatus[] = ['todo', 'in_progress', 'complete', 'on_hold', 'blocked']
-
-function isStatus(value: unknown): value is PlanStatus {
-  return typeof value === 'string' && STATUS_VALUES.includes(value as PlanStatus)
-}
 
 function clampProgress(value: number | undefined): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
@@ -285,6 +282,59 @@ async function persistPlan(userId: string, plan: AgentServicePlan): Promise<Agen
   })
 }
 
+function toExportPlanDocument(plan: AgentServicePlan): Record<string, unknown> {
+  return {
+    id: plan.id,
+    title: plan.title,
+    status: plan.status,
+    vision: plan.vision,
+    target: plan.target,
+    category: plan.category,
+    objectives: toStringArray(plan.objectives),
+    principles: toStringArray(plan.principles),
+    tags: toStringArray(plan.tags),
+    data_sources: toStringArray(plan.data_sources),
+    review_cadence: plan.review_cadence,
+    summary: plan.summary,
+    metrics: plan.metrics ?? {},
+    tracked_metrics: plan.tracked_metrics ?? [],
+    baseline_facts: plan.baseline_facts ?? [],
+    success_criteria: toStringArray(plan.success_criteria),
+    cadence: plan.cadence ?? [],
+    supporting_sections: plan.supporting_sections ?? [],
+    progress: plan.progress ?? {},
+    milestones: (plan.milestones ?? []).map((milestone) => ({
+      id: milestone.id,
+      title: milestone.title,
+      status: milestone.status,
+      summary: milestone.summary,
+      target_date: milestone.target_date,
+      tasks: (milestone.tasks ?? []).map((task) => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        notes: task.notes,
+        due_at: task.due_at,
+        completed_at: task.completed_at,
+      })),
+    })),
+    steps: plan.steps ?? [],
+  }
+}
+
+function toPlanExportResponse(plan: AgentServicePlan): ExportPlanResponse {
+  const baseName = (plan.title || 'plan')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'plan'
+  return {
+    filename: `${baseName}-${plan.id}.json`,
+    document: JSON.stringify(toExportPlanDocument(plan), null, 2),
+    contentType: 'application/json',
+  }
+}
+
 export default async function planRoutes(app: FastifyInstance) {
   app.get('/plans', async (req, reply) => {
     try {
@@ -363,7 +413,7 @@ export default async function planRoutes(app: FastifyInstance) {
     },
   )
 
-  app.post<{ Body: { title?: string; text: string; source?: string } }>(
+  app.post<{ Body: ImportPlanRequest }>(
     '/plans/import',
     {
       schema: {
@@ -371,6 +421,7 @@ export default async function planRoutes(app: FastifyInstance) {
           type: 'object',
           required: ['text'],
           properties: {
+            planId: { type: 'string', maxLength: 200 },
             title: { type: 'string', maxLength: 200 },
             text: { type: 'string', minLength: 1, maxLength: 200000 },
             source: { type: 'string', maxLength: 200 },
@@ -381,6 +432,7 @@ export default async function planRoutes(app: FastifyInstance) {
     async (req, reply) => {
       try {
         const plan = await importPlanInAgentService(req.userId, {
+          id: req.body.planId?.trim() || undefined,
           title: req.body.title?.trim() || undefined,
           text: req.body.text,
           source: req.body.source?.trim() || undefined,
@@ -391,6 +443,15 @@ export default async function planRoutes(app: FastifyInstance) {
       }
     },
   )
+
+  app.get<{ Params: { planId: string } }>('/plans/:planId/export', async (req, reply) => {
+    try {
+      const plan = await fetchPlanFromAgentService(req.userId, req.params.planId)
+      return reply.send(toPlanExportResponse(plan))
+    } catch (err) {
+      return sendAgentServiceError(reply, req, err, 'export plan')
+    }
+  })
 
   app.put<{ Params: { planId: string }; Body: UpdatePlanRequest }>(
     '/plans/:planId',

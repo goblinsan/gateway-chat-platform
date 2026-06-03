@@ -2,6 +2,8 @@ import type {
   PlanGoal,
   PlansListResponse,
   PlanResponse,
+  ImportPlanRequest,
+  ExportPlanResponse,
   CreatePlanRequest,
   UpdatePlanRequest,
   CreatePlanMilestoneRequest,
@@ -21,9 +23,14 @@ export async function createPlan(data: CreatePlanRequest): Promise<PlanGoal> {
   return res.data.plan
 }
 
-export async function importPlanDocument(data: { title?: string; text: string; source?: string }): Promise<PlanGoal> {
+export async function importPlanDocument(data: ImportPlanRequest): Promise<PlanGoal> {
   const res = await apiClient.post<PlanResponse>('/plans/import', data)
   return res.data.plan
+}
+
+export async function exportPlanDocument(planId: string): Promise<ExportPlanResponse> {
+  const res = await apiClient.get<ExportPlanResponse>(`/plans/${encodeURIComponent(planId)}/export`)
+  return res.data
 }
 
 export async function updatePlan(planId: string, data: UpdatePlanRequest): Promise<PlanGoal> {

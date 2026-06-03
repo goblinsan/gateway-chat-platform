@@ -11,7 +11,6 @@ import MicButton from '../components/SpeechControls'
 import ModelPicker from '../components/ModelPicker'
 import { useTts } from '../hooks/useTts'
 import { synthesizeSpeechToBase64 } from '../api/tts'
-import { importPlanDocument } from '../api/plans'
 
 interface ChatPageProps {
   activeAgentId: string
@@ -69,7 +68,6 @@ export default function ChatPage({
   const tts = useTts(activeAgent?.ttsVoiceId)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const planImportInputRef = useRef<HTMLInputElement>(null)
 
   // Keep a ref to the active thread's TTS state so doStream doesn't need threads in its deps
   const activeThreadTtsRef = useRef<{ enabled: boolean; voice: string }>({ enabled: false, voice: '' })
@@ -420,41 +418,6 @@ export default function ChatPage({
     [activeAgentId, activeThread, activeThreadId, onSetThreadMessages],
   )
 
-  const looksLikeStructuredPlanDocument = useCallback((text: string) => {
-    const trimmed = text.trim()
-    return trimmed.startsWith('{') || /^title\s*:/im.test(trimmed)
-  }, [])
-
-  const handlePlanImportFile = useCallback(async (file: File | null) => {
-    if (!file) return
-    try {
-      const text = (await file.text()).trim()
-      if (!text) return
-      const name = file.name.replace(/\.[^.]+$/, '')
-      if (looksLikeStructuredPlanDocument(text)) {
-        await importPlanDocument({ title: name, text, source: name })
-        onPlansPossiblyChanged?.()
-        setInput('')
-      } else {
-        const safeName = name.trim()
-        const header = safeName
-          ? `Please ingest the following plan document into my durable plans using plan_ingest_text. Use ${safeName} as the source label, infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it, then briefly summarize what you stored and any important gaps.`
-          : 'Please ingest the following plan document into my durable plans using plan_ingest_text. Infer useful metadata like category, tags, data sources, review cadence, and metrics when the text supports it. Then briefly summarize what you stored and any important gaps.'
-        setInput(`${header}\n\n<plan_document>\n${text}\n</plan_document>`)
-        requestAnimationFrame(() => {
-          textareaRef.current?.focus()
-          adjustTextarea()
-        })
-      }
-    } catch (err) {
-      console.warn('[ChatPage] Failed to import plan file:', err)
-    } finally {
-      if (planImportInputRef.current) {
-        planImportInputRef.current.value = ''
-      }
-    }
-  }, [adjustTextarea, looksLikeStructuredPlanDocument, onPlansPossiblyChanged])
-
   const handleHandoffConfirm = useCallback(async (toAgentId: string): Promise<void> => {
     if (!activeThreadId || !activeAgentId) return
     const thread = threads.find((t) => t.id === activeThreadId)
@@ -631,24 +594,6 @@ export default function ChatPage({
       <footer className="flex-shrink-0 border-t border-gray-800 p-3 bg-gray-950">
         <div className="flex items-center gap-2 mb-2">
           <FileAttachment threadId={activeThreadId} />
-          <input
-            ref={planImportInputRef}
-            type="file"
-            accept=".txt,.md,.markdown,.yaml,.yml,text/plain,text/markdown,application/yaml,text/yaml"
-            className="hidden"
-            onChange={(event) => {
-              void handlePlanImportFile(event.target.files?.[0] ?? null)
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => planImportInputRef.current?.click()}
-            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors text-xs"
-            title="Import plan document"
-          >
-            <span aria-hidden="true">🎯</span>
-            <span className="hidden sm:inline">Import plan</span>
-          </button>
           <div className="flex-1" />
           {/* Per-message model override picker (Issue #95) */}
           {activeAgentId && activeAgent && (
