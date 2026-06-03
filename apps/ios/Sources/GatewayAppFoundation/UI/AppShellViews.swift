@@ -457,9 +457,10 @@ struct AlertInboxView: View {
   @State private var notifications: [GatewayNotificationSummary] = []
   @State private var isLoading = false
   @State private var errorMessage: String?
+  @State private var navigationPath = NavigationPath()
 
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $navigationPath) {
       Group {
         if isLoading && notifications.isEmpty {
           ProgressView("Loading inbox…")
@@ -489,55 +490,58 @@ struct AlertInboxView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           List(notifications) { notification in
-            VStack(alignment: .leading, spacing: 8) {
-              HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(notification.title)
-                    .font(.headline)
-                  Text(notification.kind.replacingOccurrences(of: "_", with: " "))
+            NavigationLink(value: notification.id) {
+              VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 12) {
+                  VStack(alignment: .leading, spacing: 4) {
+                    Text(notification.title)
+                      .font(.headline)
+                    Text(notification.kind.replacingOccurrences(of: "_", with: " "))
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                  Spacer()
+                  if !notification.isRead {
+                    Circle()
+                      .fill(.blue)
+                      .frame(width: 10, height: 10)
+                  }
+                }
+
+                if let body = notificationPreviewBody(notification), !body.isEmpty {
+                  Text(body)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+                }
+
+                HStack {
+                  Text(notification.createdAt.alertFormattedDate())
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !notification.isRead {
-                  Circle()
-                    .fill(.blue)
-                    .frame(width: 10, height: 10)
-                }
-              }
-
-              if let body = notification.body, !body.isEmpty {
-                Text(body)
-                  .font(.subheadline)
-                  .foregroundStyle(.primary)
-              }
-
-              HStack {
-                Text(notification.createdAt.alertFormattedDate())
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-                Spacer()
-                if let threadID = notification.threadID, !threadID.isEmpty {
-                  Text(threadID)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                }
-              }
-
-              if model.ttsEnabled, let speechText = notificationSpeechText(notification) {
-                HStack {
                   Spacer()
-                  Button {
-                    Task { await model.speak(text: speechText) }
-                  } label: {
-                    Label("Read aloud", systemImage: "speaker.wave.2")
-                      .font(.caption)
+                  if let threadID = notification.threadID, !threadID.isEmpty {
+                    Text(threadID)
+                      .font(.caption2.monospaced())
+                      .foregroundStyle(.secondary)
                   }
-                  .buttonStyle(.borderless)
+                }
+
+                if model.ttsEnabled, let speechText = notificationSpeechText(notification) {
+                  HStack {
+                    Spacer()
+                    Button {
+                      Task { await model.speak(text: speechText) }
+                    } label: {
+                      Label("Read aloud", systemImage: "speaker.wave.2")
+                        .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                  }
                 }
               }
+              .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
               Button(role: .destructive) {
                 Task { await deleteNotification(notification.id) }
@@ -571,16 +575,55 @@ struct AlertInboxView: View {
         }
       }
       .navigationTitle("Alerts")
+      .navigationDestination(for: String.self) { notificationID in
+        NotificationDetailView(
+          model: model,
+          notification: notifications.first(where: { $0.id == notificationID }),
+          onMarkRead: { id in
+            Task { await markNotificationRead(id) }
+          },
+          onDelete: { id in
+            Task { await deleteNotification(id) }
+          }
+        )
+      }
     }
     .task {
       await model.loadVoices()
       await loadNotifications()
     }
+    .onChange(of: model.pendingAlertID) { _, alertID in
+      guard let alertID, !alertID.isEmpty else { return }
+      Task {
+        if !notifications.contains(where: { $0.id == alertID }) {
+          await loadNotifications()
+        }
+        navigationPath.append(alertID)
+        model.pendingAlertID = nil
+      }
+    }
+  }
+
+  private func notificationBody(_ notification: GatewayNotificationSummary) -> String? {
+    if let fullBody = notification.payload?["full_body"], !fullBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return fullBody
+    }
+    if let body = notification.body, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return body
+    }
+    return nil
+  }
+
+  private func notificationPreviewBody(_ notification: GatewayNotificationSummary) -> String? {
+    if let preview = notification.payload?["preview_body"], !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return preview
+    }
+    return notificationBody(notification)
   }
 
   private func notificationSpeechText(_ notification: GatewayNotificationSummary) -> String? {
     let title = notification.title.trimmingCharacters(in: .whitespacesAndNewlines)
-    let body = notification.body?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let body = notificationBody(notification)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     let text: String
     switch (title.isEmpty, body.isEmpty) {
     case (false, false):
@@ -659,6 +702,114 @@ struct AlertInboxView: View {
       notifications.removeAll { $0.id == notificationID }
     } catch {
       errorMessage = error.localizedDescription
+    }
+  }
+}
+
+private struct NotificationDetailView: View {
+  @ObservedObject var model: GatewayAppViewModel
+  let notification: GatewayNotificationSummary?
+  let onMarkRead: (String) -> Void
+  let onDelete: (String) -> Void
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    Group {
+      if let notification {
+        List {
+          Section("Notification") {
+            Text(notification.title)
+              .font(.headline)
+            Text(notification.kind.replacingOccurrences(of: "_", with: " "))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            if let body = fullBody(notification), !body.isEmpty {
+              Text(body)
+                .textSelection(.enabled)
+            }
+            Text(notification.createdAt.alertFormattedDate())
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            if let threadID = notification.threadID, !threadID.isEmpty {
+              LabeledContent("Thread", value: threadID)
+            }
+          }
+
+          if model.ttsEnabled, let speechText = speechText(notification) {
+            Section("Actions") {
+              Button {
+                Task { await model.speak(text: speechText) }
+              } label: {
+                Label("Read aloud", systemImage: "speaker.wave.2")
+              }
+              if !notification.isRead {
+                Button {
+                  onMarkRead(notification.id)
+                } label: {
+                  Label("Mark read", systemImage: "checkmark")
+                }
+              }
+              Button(role: .destructive) {
+                onDelete(notification.id)
+                dismiss()
+              } label: {
+                Label("Delete notification", systemImage: "trash")
+              }
+            }
+          } else {
+            Section("Actions") {
+              if !notification.isRead {
+                Button {
+                  onMarkRead(notification.id)
+                } label: {
+                  Label("Mark read", systemImage: "checkmark")
+                }
+              }
+              Button(role: .destructive) {
+                onDelete(notification.id)
+                dismiss()
+              } label: {
+                Label("Delete notification", systemImage: "trash")
+              }
+            }
+          }
+        }
+        .navigationTitle("Notification")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+          if !notification.isRead {
+            onMarkRead(notification.id)
+          }
+        }
+      } else {
+        ContentUnavailableView(
+          "Notification unavailable",
+          systemImage: "bell.slash",
+          description: Text("This notification could not be loaded.")
+        )
+      }
+    }
+  }
+
+  private func fullBody(_ notification: GatewayNotificationSummary) -> String? {
+    if let fullBody = notification.payload?["full_body"], !fullBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return fullBody
+    }
+    return notification.body
+  }
+
+  private func speechText(_ notification: GatewayNotificationSummary) -> String? {
+    let title = notification.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let body = fullBody(notification)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    switch (title.isEmpty, body.isEmpty) {
+    case (false, false):
+      return "\(title). \(body)"
+    case (false, true):
+      return title
+    case (true, false):
+      return body
+    case (true, true):
+      return nil
     }
   }
 }
