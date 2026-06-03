@@ -266,6 +266,40 @@ export function usePlans() {
     }
   }, [plans, refresh])
 
+  const patchTask = useCallback(async (
+    planId: string,
+    milestoneId: string,
+    taskId: string,
+    patch: { title?: string; notes?: string; status?: PlanTaskStatus },
+  ) => {
+    const previous = plans
+    setPlans((prev) => prev.map((plan) => (
+      plan.id !== planId
+        ? plan
+        : {
+            ...plan,
+            milestones: plan.milestones.map((milestone) => (
+              milestone.id !== milestoneId
+                ? milestone
+                : {
+                    ...milestone,
+                    tasks: milestone.tasks.map((task) => (
+                      task.id === taskId ? { ...task, ...patch } : task
+                    )),
+                  }
+            )),
+          }
+    )))
+    try {
+      await updatePlanTask(planId, milestoneId, taskId, patch)
+      await refresh()
+    } catch (err) {
+      setPlans(previous)
+      setError(err instanceof Error ? err.message : 'Failed to update task')
+      await refresh()
+    }
+  }, [plans, refresh])
+
   const removeTask = useCallback(async (planId: string, milestoneId: string, taskId: string) => {
     const previous = plans
     setPlans((prev) => prev.map((plan) => (
@@ -304,6 +338,7 @@ export function usePlans() {
     removeMilestone,
     addTask,
     updateTaskStatus,
+    patchTask,
     removeTask,
   }
 }

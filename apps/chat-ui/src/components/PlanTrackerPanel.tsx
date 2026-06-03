@@ -26,6 +26,7 @@ interface PlanTrackerPanelProps {
   onDeleteMilestone: (planId: string, milestoneId: string) => Promise<void>
   onAddTask: (input: { planId: string; milestoneId: string; title: string }) => Promise<void>
   onUpdateTaskStatus: (planId: string, milestoneId: string, taskId: string, status: PlanTaskStatus) => Promise<void>
+  onPatchTask: (planId: string, milestoneId: string, taskId: string, patch: { title?: string; notes?: string; status?: PlanTaskStatus }) => Promise<void>
   onDeleteTask: (planId: string, milestoneId: string, taskId: string) => Promise<void>
 }
 
@@ -150,6 +151,7 @@ export default function PlanTrackerPanel({
   onDeleteMilestone,
   onAddTask,
   onUpdateTaskStatus,
+  onPatchTask,
   onDeleteTask,
 }: PlanTrackerPanelProps) {
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -621,7 +623,7 @@ export default function PlanTrackerPanel({
                   className="rounded border border-gray-700 px-2 py-1 text-[11px] text-gray-300 hover:text-white"
                   onClick={() => { void handleExport(plan.id) }}
                 >
-                  Export JSON
+                  Export plan
                 </button>
                 <button
                   type="button"
@@ -735,6 +737,24 @@ export default function PlanTrackerPanel({
                                   Mark won’t do
                                 </button>
                               )}
+                              <button
+                                type="button"
+                                className="rounded border border-gray-700 px-1.5 py-0.5 text-[10px] text-gray-300"
+                                onClick={() => {
+                                  const title = window.prompt('Edit task title', task.title)
+                                  if (title === null) return
+                                  const notes = window.prompt('Edit task notes', task.notes ?? '')
+                                  if (notes === null) return
+                                  const trimmedTitle = title.trim()
+                                  if (!trimmedTitle) return
+                                  void onPatchTask(plan.id, milestone.id, task.id, {
+                                    title: trimmedTitle,
+                                    notes: notes.trim() || undefined,
+                                  })
+                                }}
+                              >
+                                Edit task
+                              </button>
                               <button
                                 type="button"
                                 className="rounded border border-red-700 px-1.5 py-0.5 text-[10px] text-red-300"

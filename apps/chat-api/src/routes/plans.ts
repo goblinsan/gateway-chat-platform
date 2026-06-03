@@ -22,6 +22,7 @@ import {
   type AgentServicePlanMilestone,
   type AgentServicePlanTask,
   deletePlanInAgentService,
+  exportPlanDocumentFromAgentService,
   fetchPlanFromAgentService,
   fetchPlansFromAgentService,
   importPlanInAgentService,
@@ -282,59 +283,6 @@ async function persistPlan(userId: string, plan: AgentServicePlan): Promise<Agen
   })
 }
 
-function toExportPlanDocument(plan: AgentServicePlan): Record<string, unknown> {
-  return {
-    id: plan.id,
-    title: plan.title,
-    status: plan.status,
-    vision: plan.vision,
-    target: plan.target,
-    category: plan.category,
-    objectives: toStringArray(plan.objectives),
-    principles: toStringArray(plan.principles),
-    tags: toStringArray(plan.tags),
-    data_sources: toStringArray(plan.data_sources),
-    review_cadence: plan.review_cadence,
-    summary: plan.summary,
-    metrics: plan.metrics ?? {},
-    tracked_metrics: plan.tracked_metrics ?? [],
-    baseline_facts: plan.baseline_facts ?? [],
-    success_criteria: toStringArray(plan.success_criteria),
-    cadence: plan.cadence ?? [],
-    supporting_sections: plan.supporting_sections ?? [],
-    progress: plan.progress ?? {},
-    milestones: (plan.milestones ?? []).map((milestone) => ({
-      id: milestone.id,
-      title: milestone.title,
-      status: milestone.status,
-      summary: milestone.summary,
-      target_date: milestone.target_date,
-      tasks: (milestone.tasks ?? []).map((task) => ({
-        id: task.id,
-        title: task.title,
-        status: task.status,
-        notes: task.notes,
-        due_at: task.due_at,
-        completed_at: task.completed_at,
-      })),
-    })),
-    steps: plan.steps ?? [],
-  }
-}
-
-function toPlanExportResponse(plan: AgentServicePlan): ExportPlanResponse {
-  const baseName = (plan.title || 'plan')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'plan'
-  return {
-    filename: `${baseName}-${plan.id}.json`,
-    document: JSON.stringify(toExportPlanDocument(plan), null, 2),
-    contentType: 'application/json',
-  }
-}
-
 export default async function planRoutes(app: FastifyInstance) {
   app.get('/plans', async (req, reply) => {
     try {
@@ -446,8 +394,8 @@ export default async function planRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { planId: string } }>('/plans/:planId/export', async (req, reply) => {
     try {
-      const plan = await fetchPlanFromAgentService(req.userId, req.params.planId)
-      return reply.send(toPlanExportResponse(plan))
+      const exported: ExportPlanResponse = await exportPlanDocumentFromAgentService(req.userId, req.params.planId)
+      return reply.send(exported)
     } catch (err) {
       return sendAgentServiceError(reply, req, err, 'export plan')
     }

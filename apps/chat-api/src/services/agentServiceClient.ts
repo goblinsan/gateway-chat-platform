@@ -1092,6 +1092,34 @@ export async function fetchPlanFromAgentService(userId: string, planId: string):
   return normalizePlanRecord(body.plan ?? {})
 }
 
+export async function exportPlanDocumentFromAgentService(
+  userId: string,
+  planId: string,
+  format?: string,
+): Promise<{ filename: string; document: string; contentType: string }> {
+  const base = requireAgentServiceUrl()
+  const query = format?.trim() ? `?format=${encodeURIComponent(format.trim())}` : ''
+  const res = await fetchWithTimeout(`${base}/internal/plans/${encodeURIComponent(planId)}/export${query}`, {
+    method: 'GET',
+    headers: buildUserHeaders(userId),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new AgentServiceError(`agent-service returned ${res.status}: ${text}`, res.status)
+  }
+
+  const contentType = res.headers.get('content-type') ?? 'application/octet-stream'
+  const disposition = res.headers.get('content-disposition') ?? ''
+  const filenameMatch = disposition.match(/filename="([^"]+)"/i)
+  const document = await res.text()
+
+  return {
+    filename: filenameMatch?.[1] || `${planId}.${contentType.includes('json') ? 'json' : 'yaml'}`,
+    document,
+    contentType,
+  }
+}
+
 export async function upsertPlanInAgentService(
   userId: string,
   input: {

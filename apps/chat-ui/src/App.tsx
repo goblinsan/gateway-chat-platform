@@ -344,6 +344,7 @@ function ChatLayout() {
         onDeleteMilestone={plans.removeMilestone}
         onAddTask={plans.addTask}
         onUpdateTaskStatus={plans.updateTaskStatus}
+        onPatchTask={plans.patchTask}
         onDeleteTask={plans.removeTask}
         onClose={() => setShowPlans(false)}
       />

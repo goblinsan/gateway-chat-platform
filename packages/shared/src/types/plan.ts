@@ -109,7 +109,7 @@ export interface ImportPlanRequest {
 export interface ExportPlanResponse {
   filename: string
   document: string
-  contentType: 'application/json'
+  contentType: string
 }
 
 export interface CreatePlanRequest {

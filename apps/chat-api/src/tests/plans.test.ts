@@ -13,6 +13,7 @@ const mockFetchPlans = vi.fn()
 const mockFetchPlan = vi.fn()
 const mockUpsertPlan = vi.fn()
 const mockImportPlan = vi.fn()
+const mockExportPlan = vi.fn()
 const mockDeletePlan = vi.fn()
 
 vi.mock('../services/agentServiceClient', () => ({
@@ -26,6 +27,7 @@ vi.mock('../services/agentServiceClient', () => ({
   fetchPlanFromAgentService: (...args: unknown[]) => mockFetchPlan(...args),
   upsertPlanInAgentService: (...args: unknown[]) => mockUpsertPlan(...args),
   importPlanInAgentService: (...args: unknown[]) => mockImportPlan(...args),
+  exportPlanDocumentFromAgentService: (...args: unknown[]) => mockExportPlan(...args),
   deletePlanInAgentService: (...args: unknown[]) => mockDeletePlan(...args),
 }))
 
@@ -81,6 +83,11 @@ beforeEach(() => {
   mockFetchPlan.mockResolvedValue(PLAN_ROW)
   mockUpsertPlan.mockResolvedValue(PLAN_ROW)
   mockImportPlan.mockResolvedValue(PLAN_ROW)
+  mockExportPlan.mockResolvedValue({
+    filename: 'shipping-plan-tracker-plan-1.yaml',
+    document: 'title: Shipping plan tracker\nconnectors:\n  - app: healthfit\n',
+    contentType: 'application/yaml; charset=utf-8',
+  })
   mockDeletePlan.mockResolvedValue(undefined)
 })
 
@@ -193,13 +200,11 @@ describe('GET /api/plans/:planId/export', () => {
     })
 
     expect(response.statusCode).toBe(200)
-    expect(mockFetchPlan).toHaveBeenCalledWith('alice', 'plan-1')
-    expect(response.headers['content-type']).toContain('application/json')
+    expect(mockExportPlan).toHaveBeenCalledWith('alice', 'plan-1')
     const body = JSON.parse(response.body)
-    expect(body.filename).toBe('shipping-plan-tracker-plan-1.json')
-    expect(body.document).toContain('"data_sources"')
-    expect(body.document).toContain('"milestones"')
-    expect(body.document).toContain('"tasks"')
+    expect(body.filename).toBe('shipping-plan-tracker-plan-1.yaml')
+    expect(body.contentType).toContain('application/yaml')
+    expect(body.document).toContain('connectors:')
   })
 })
 
