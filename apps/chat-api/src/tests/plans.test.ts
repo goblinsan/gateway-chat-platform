@@ -142,6 +142,28 @@ describe('POST /api/plans/import', () => {
     expect(response.body).toContain('"title":"Shipping plan tracker"')
   })
 
+  it('updates an existing plan when planId is provided', async () => {
+    const app = await buildApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/plans/import',
+      headers: { 'x-user-id': 'alice' },
+      payload: {
+        planId: 'plan-1',
+        title: 'Shipping plan tracker',
+        source: 'shipping-plan.json',
+        text: '{"title":"Shipping plan tracker"}',
+      },
+    })
+
+    expect(response.statusCode).toBe(201)
+    expect(mockImportPlan).toHaveBeenCalledWith('alice', expect.objectContaining({
+      id: 'plan-1',
+      title: 'Shipping plan tracker',
+      source: 'shipping-plan.json',
+    }))
+  })
+
   it('surfaces structured import validation errors instead of masking them as 502', async () => {
     mockImportPlan.mockRejectedValueOnce(new AgentServiceError('agent-service returned 400: {"error":"failed to parse structured plan document \\"endurance.yaml\\": yaml: line 5: mapping values are not allowed in this context. Fix the YAML/JSON formatting and try again. For YAML, quote values containing \':\' such as task titles"}', 400))
     const app = await buildApp()
@@ -158,6 +180,26 @@ describe('POST /api/plans/import', () => {
     expect(response.statusCode).toBe(400)
     expect(response.body).toContain('Fix the YAML/JSON formatting')
     expect(response.body).not.toContain('agent-service returned 400:')
+  })
+})
+
+describe('GET /api/plans/:planId/export', () => {
+  it('exports the durable plan document with rich metadata preserved', async () => {
+    const app = await buildApp()
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/plans/plan-1/export',
+      headers: { 'x-user-id': 'alice' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(mockFetchPlan).toHaveBeenCalledWith('alice', 'plan-1')
+    expect(response.headers['content-type']).toContain('application/json')
+    const body = JSON.parse(response.body)
+    expect(body.filename).toBe('shipping-plan-tracker-plan-1.json')
+    expect(body.document).toContain('"data_sources"')
+    expect(body.document).toContain('"milestones"')
+    expect(body.document).toContain('"tasks"')
   })
 })
 

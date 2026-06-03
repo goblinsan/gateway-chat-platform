@@ -1,9 +1,10 @@
 import { useCallback, useState } from 'react'
-import type { PlanGoal, PlanStatus, PlanTaskStatus } from '@gateway/shared'
+import type { ExportPlanResponse, ImportPlanRequest, PlanGoal, PlanStatus, PlanTaskStatus, UpdatePlanRequest } from '@gateway/shared'
 import {
   listPlans,
   createPlan,
   importPlanDocument,
+  exportPlanDocument,
   updatePlan,
   deletePlan,
   createPlanMilestone,
@@ -14,7 +15,7 @@ import {
   deletePlanTask,
 } from '../api/plans'
 
-type PlanPatch = Partial<Pick<PlanGoal, 'title' | 'vision' | 'status' | 'progressPercent' | 'reviewCadence' | 'sourceSystems' | 'metrics'>>
+type PlanPatch = UpdatePlanRequest
 
 interface CreatePlanInput {
   title: string
@@ -84,7 +85,7 @@ export function usePlans() {
     }
   }, [refresh])
 
-  const importDocument = useCallback(async (data: { title?: string; text: string; source?: string }) => {
+  const importDocument = useCallback(async (data: ImportPlanRequest) => {
     try {
       await importPlanDocument(data)
       await refresh()
@@ -93,6 +94,17 @@ export function usePlans() {
       await refresh()
     }
   }, [refresh])
+
+  const exportDocument = useCallback(async (planId: string): Promise<ExportPlanResponse> => {
+    try {
+      setError(null)
+      return await exportPlanDocument(planId)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to export plan'
+      setError(message)
+      throw err
+    }
+  }, [])
 
   const patchPlan = useCallback(async (planId: string, patch: PlanPatch) => {
     const previous = plans
@@ -284,6 +296,7 @@ export function usePlans() {
     refresh,
     create,
     importDocument,
+    exportDocument,
     patchPlan,
     remove,
     addMilestone,

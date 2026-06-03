@@ -336,6 +336,7 @@ function ChatLayout() {
         onRefresh={plans.refresh}
         onCreatePlan={plans.create}
         onImportPlan={plans.importDocument}
+        onExportPlan={plans.exportDocument}
         onPatchPlan={plans.patchPlan}
         onDeletePlan={plans.remove}
         onAddMilestone={plans.addMilestone}

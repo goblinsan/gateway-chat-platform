@@ -99,6 +99,19 @@ export interface PlanResponse {
   plan: PlanGoal
 }
 
+export interface ImportPlanRequest {
+  planId?: string
+  title?: string
+  text: string
+  source?: string
+}
+
+export interface ExportPlanResponse {
+  filename: string
+  document: string
+  contentType: 'application/json'
+}
+
 export interface CreatePlanRequest {
   title: string
   vision?: string
