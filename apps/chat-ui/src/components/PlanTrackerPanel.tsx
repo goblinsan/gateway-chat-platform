@@ -8,6 +8,7 @@ import type {
   PlanTaskStatus,
   UpdatePlanRequest,
 } from '@gateway/shared'
+import PlanCalendarView from './PlanCalendarView'
 
 interface PlanTrackerPanelProps {
   isOpen: boolean
@@ -67,7 +68,7 @@ const TASK_STATUS_CLASS: Record<PlanTaskStatus, string> = {
 const STATUS_VALUES: PlanStatus[] = ['on_track', 'at_risk', 'blocked', 'complete']
 const TASK_STATUS_VALUES: PlanTaskStatus[] = ['todo', 'in_progress', 'complete', 'on_hold', 'blocked']
 
-type PlanViewMode = 'list' | 'timeline'
+type PlanViewMode = 'list' | 'timeline' | 'calendar'
 
 interface PlanDraft {
   title: string
@@ -417,6 +418,13 @@ export default function PlanTrackerPanel({
             >
               Timeline
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('calendar')}
+              className={`px-2 py-1.5 text-xs transition-colors ${viewMode === 'calendar' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:text-white'}`}
+            >
+              Calendar
+            </button>
           </div>
           <input
             ref={importInputRef}
@@ -456,7 +464,10 @@ export default function PlanTrackerPanel({
             <p className="mt-1 text-xs text-gray-500">Create or import a plan to start tracking milestones, tasks, and supporting material.</p>
           </div>
         )}
-        {plans.map((plan) => {
+        {viewMode === 'calendar' && plans.length > 0 && (
+          <PlanCalendarView plans={plans} />
+        )}
+        {viewMode !== 'calendar' && plans.map((plan) => {
           const isEditing = editingPlanId === plan.id && planDraft !== null
           const totalTasks = plan.milestones.reduce((count, milestone) => count + milestone.tasks.length, 0)
           const completedTasks = plan.milestones.reduce(

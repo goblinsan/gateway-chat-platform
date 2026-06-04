@@ -49,6 +49,7 @@ export interface PlanTask {
   status: PlanTaskStatus
   progressPercent: number
   orderIndex: number
+  dueAt?: string
   createdAt: string
   updatedAt: string
 }
@@ -61,6 +62,7 @@ export interface PlanMilestone {
   status: PlanStatus
   progressPercent: number
   orderIndex: number
+  targetDate?: string
   createdAt: string
   updatedAt: string
   tasks: PlanTask[]
@@ -140,6 +142,7 @@ export interface CreatePlanMilestoneRequest {
   status?: PlanStatus
   progressPercent?: number
   orderIndex?: number
+  targetDate?: string
 }
 
 export type UpdatePlanMilestoneRequest = Partial<CreatePlanMilestoneRequest>
@@ -150,6 +153,7 @@ export interface CreatePlanTaskRequest {
   status?: PlanTaskStatus
   progressPercent?: number
   orderIndex?: number
+  dueAt?: string
 }
 
 export type UpdatePlanTaskRequest = Partial<CreatePlanTaskRequest>
