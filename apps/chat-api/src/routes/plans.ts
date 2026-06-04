@@ -158,7 +158,14 @@ function toTaskModel(task: AgentServicePlanTask, milestoneId: string, orderIndex
     status: taskStatusFromStore(task.status),
     progressPercent: taskProgressFromStore(task),
     orderIndex,
+    scheduledAt: task.scheduled_at || undefined,
+    startAt: task.start_at || undefined,
+    targetAt: task.target_at || undefined,
     dueAt: task.due_at || undefined,
+    endAt: task.end_at || undefined,
+    completedAt: task.completed_at || undefined,
+    dependsOn: task.depends_on ?? [],
+    sequence: task.sequence,
     createdAt: updatedAt,
     updatedAt,
   }
@@ -178,7 +185,12 @@ function toMilestoneModel(
     status: planStatusFromStore(milestone.status),
     progressPercent: milestoneProgressFromStore(milestone),
     orderIndex,
+    scheduledDate: milestone.scheduled_date || undefined,
+    startDate: milestone.start_date || undefined,
     targetDate: milestone.target_date || undefined,
+    endDate: milestone.end_date || undefined,
+    dependsOn: milestone.depends_on ?? [],
+    sequence: milestone.sequence,
     createdAt: updatedAt,
     updatedAt,
     tasks: (milestone.tasks ?? []).map((task, taskIndex) => toTaskModel(task, milestone.id, taskIndex, updatedAt)),
@@ -483,7 +495,12 @@ export default async function planRoutes(app: FastifyInstance) {
             status: { type: 'string', enum: STATUS_VALUES },
             progressPercent: { type: 'number', minimum: 0, maximum: 100 },
             orderIndex: { type: 'integer', minimum: 0, maximum: 1000000 },
+            scheduledDate: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            startDate: { anyOf: [{ type: 'string' }, { type: 'null' }] },
             targetDate: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            endDate: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            dependsOn: { type: 'array', items: { type: 'string' }, maxItems: 100 },
+            sequence: { type: 'integer', minimum: 0, maximum: 1000000 },
           },
         },
       },
@@ -496,7 +513,12 @@ export default async function planRoutes(app: FastifyInstance) {
           title: req.body.title.trim(),
           status: storeStatusFromPlan(req.body.status, 'active'),
           summary: req.body.notes?.trim() || '',
+          scheduled_date: req.body.scheduledDate?.trim() || undefined,
+          start_date: req.body.startDate?.trim() || undefined,
           target_date: req.body.targetDate?.trim() || undefined,
+          end_date: req.body.endDate?.trim() || undefined,
+          depends_on: req.body.dependsOn?.map((value) => value.trim()).filter(Boolean) ?? [],
+          sequence: req.body.sequence,
           tasks: [],
         }
         const milestones = plan.milestones ?? []
@@ -528,7 +550,12 @@ export default async function planRoutes(app: FastifyInstance) {
         if (req.body.title !== undefined) milestone.title = req.body.title.trim()
         if (req.body.notes !== undefined) milestone.summary = req.body.notes?.trim() || ''
         if (req.body.status !== undefined) milestone.status = storeStatusFromPlan(req.body.status, milestone.status || 'active')
+        if (req.body.scheduledDate !== undefined) milestone.scheduled_date = req.body.scheduledDate?.trim() || undefined
+        if (req.body.startDate !== undefined) milestone.start_date = req.body.startDate?.trim() || undefined
         if (req.body.targetDate !== undefined) milestone.target_date = req.body.targetDate?.trim() || undefined
+        if (req.body.endDate !== undefined) milestone.end_date = req.body.endDate?.trim() || undefined
+        if (req.body.dependsOn !== undefined) milestone.depends_on = req.body.dependsOn.map((value) => value.trim()).filter(Boolean)
+        if (req.body.sequence !== undefined) milestone.sequence = req.body.sequence
         if (req.body.orderIndex !== undefined) {
           milestones.splice(milestoneIndex, 1)
           const insertAt = Math.min(Math.max(req.body.orderIndex, 0), milestones.length)
@@ -579,7 +606,14 @@ export default async function planRoutes(app: FastifyInstance) {
             status: { type: 'string', enum: STATUS_VALUES },
             progressPercent: { type: 'number', minimum: 0, maximum: 100 },
             orderIndex: { type: 'integer', minimum: 0, maximum: 1000000 },
+            scheduledAt: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            startAt: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            targetAt: { anyOf: [{ type: 'string' }, { type: 'null' }] },
             dueAt: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            endAt: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            completedAt: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            dependsOn: { type: 'array', items: { type: 'string' }, maxItems: 100 },
+            sequence: { type: 'integer', minimum: 0, maximum: 1000000 },
           },
         },
       },
@@ -596,7 +630,14 @@ export default async function planRoutes(app: FastifyInstance) {
           title: req.body.title.trim(),
           status: storeStatusFromTask(req.body.status, 'todo'),
           notes: req.body.notes?.trim() || '',
+          scheduled_at: req.body.scheduledAt?.trim() || undefined,
+          start_at: req.body.startAt?.trim() || undefined,
+          target_at: req.body.targetAt?.trim() || undefined,
           due_at: req.body.dueAt?.trim() || undefined,
+          end_at: req.body.endAt?.trim() || undefined,
+          completed_at: req.body.completedAt?.trim() || undefined,
+          depends_on: req.body.dependsOn?.map((value) => value.trim()).filter(Boolean) ?? [],
+          sequence: req.body.sequence,
         }
         const tasks = milestone.tasks ?? []
         const insertAt = Math.min(Math.max(req.body.orderIndex ?? tasks.length, 0), tasks.length)
@@ -632,7 +673,14 @@ export default async function planRoutes(app: FastifyInstance) {
         if (req.body.title !== undefined) task.title = req.body.title.trim()
         if (req.body.notes !== undefined) task.notes = req.body.notes?.trim() || ''
         if (req.body.status !== undefined) task.status = storeStatusFromTask(req.body.status, task.status || 'todo')
+        if (req.body.scheduledAt !== undefined) task.scheduled_at = req.body.scheduledAt?.trim() || undefined
+        if (req.body.startAt !== undefined) task.start_at = req.body.startAt?.trim() || undefined
+        if (req.body.targetAt !== undefined) task.target_at = req.body.targetAt?.trim() || undefined
         if (req.body.dueAt !== undefined) task.due_at = req.body.dueAt?.trim() || undefined
+        if (req.body.endAt !== undefined) task.end_at = req.body.endAt?.trim() || undefined
+        if (req.body.completedAt !== undefined) task.completed_at = req.body.completedAt?.trim() || undefined
+        if (req.body.dependsOn !== undefined) task.depends_on = req.body.dependsOn.map((value) => value.trim()).filter(Boolean)
+        if (req.body.sequence !== undefined) task.sequence = req.body.sequence
         if (req.body.orderIndex !== undefined) {
           tasks.splice(taskIndex, 1)
           const insertAt = Math.min(Math.max(req.body.orderIndex, 0), tasks.length)

@@ -814,7 +814,13 @@ export interface AgentServicePlanTask {
   title: string
   status: string
   notes?: string
+  scheduled_at?: string
+  start_at?: string
+  target_at?: string
   due_at?: string
+  end_at?: string
+  depends_on?: string[]
+  sequence?: number
   completed_at?: string
 }
 
@@ -836,7 +842,12 @@ export interface AgentServicePlanMilestone {
   title: string
   status: string
   summary?: string
+  scheduled_date?: string
+  start_date?: string
   target_date?: string
+  end_date?: string
+  depends_on?: string[]
+  sequence?: number
   tasks: AgentServicePlanTask[]
 }
 
@@ -919,7 +930,15 @@ function normalizePlanTaskRecord(input: Record<string, unknown>): AgentServicePl
     title: String(input.title ?? ''),
     status: String(input.status ?? ''),
     notes: typeof input.notes === 'string' ? input.notes : undefined,
+    scheduled_at: typeof input.scheduled_at === 'string' ? input.scheduled_at : undefined,
+    start_at: typeof input.start_at === 'string' ? input.start_at : undefined,
+    target_at: typeof input.target_at === 'string' ? input.target_at : undefined,
     due_at: typeof input.due_at === 'string' ? input.due_at : undefined,
+    end_at: typeof input.end_at === 'string' ? input.end_at : undefined,
+    depends_on: Array.isArray(input.depends_on)
+      ? input.depends_on.filter((value): value is string => typeof value === 'string')
+      : undefined,
+    sequence: typeof input.sequence === 'number' ? input.sequence : undefined,
     completed_at: typeof input.completed_at === 'string' ? input.completed_at : undefined,
   }
 }
@@ -935,7 +954,14 @@ function normalizePlanMilestoneRecord(input: Record<string, unknown>): AgentServ
     title: String(input.title ?? ''),
     status: String(input.status ?? ''),
     summary: typeof input.summary === 'string' ? input.summary : undefined,
+    scheduled_date: typeof input.scheduled_date === 'string' ? input.scheduled_date : undefined,
+    start_date: typeof input.start_date === 'string' ? input.start_date : undefined,
     target_date: typeof input.target_date === 'string' ? input.target_date : undefined,
+    end_date: typeof input.end_date === 'string' ? input.end_date : undefined,
+    depends_on: Array.isArray(input.depends_on)
+      ? input.depends_on.filter((value): value is string => typeof value === 'string')
+      : undefined,
+    sequence: typeof input.sequence === 'number' ? input.sequence : undefined,
     tasks,
   }
 }

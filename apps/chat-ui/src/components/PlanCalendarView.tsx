@@ -116,6 +116,15 @@ function isOverdue(dateStr: string, now: Date): boolean {
   return d < today
 }
 
+function isTaskComplete(task: PlanTask): boolean {
+  return task.status === 'complete' || Boolean(task.completedAt)
+}
+
+function isMilestoneComplete(milestone: PlanMilestone): boolean {
+  if (milestone.status === 'complete') return true
+  return milestone.tasks.length > 0 && milestone.tasks.every(isTaskComplete)
+}
+
 function todayAnchor(): Date {
   const d = new Date()
   d.setHours(12, 0, 0, 0)
@@ -171,31 +180,50 @@ export default function PlanCalendarView({ plans }: PlanCalendarViewProps) {
 
   for (const plan of plans) {
     for (const milestone of plan.milestones) {
-      if (milestone.targetDate) {
-        const d = parseScheduleDate(milestone.targetDate)
-        if (d) {
-          if (withinRange(milestone.targetDate, rangeStart, rangeEnd)) {
+      const milestoneDates = [
+        { value: milestone.scheduledDate, isDeadline: false },
+        { value: milestone.startDate, isDeadline: false },
+        { value: milestone.targetDate, isDeadline: true },
+        { value: milestone.endDate, isDeadline: true },
+      ].filter((entry) => Boolean(entry.value))
+
+      if (milestoneDates.length === 0) {
+        unscheduledItems.push({ kind: 'milestone', plan, milestone })
+      } else {
+        for (const entry of milestoneDates) {
+          if (!entry.value) continue
+          const d = parseScheduleDate(entry.value)
+          if (!d) continue
+          if (withinRange(entry.value, rangeStart, rangeEnd)) {
             scheduledItems.push({ kind: 'milestone', plan, milestone, date: d })
-          } else if (isOverdue(milestone.targetDate, now) && milestone.status !== 'complete') {
+          } else if (entry.isDeadline && isOverdue(entry.value, now) && !isMilestoneComplete(milestone)) {
             overdueItems.push({ kind: 'milestone', plan, milestone, date: d })
           }
         }
-      } else {
-        unscheduledItems.push({ kind: 'milestone', plan, milestone })
       }
 
       for (const task of milestone.tasks) {
-        if (task.dueAt) {
-          const d = parseScheduleDate(task.dueAt)
-          if (d) {
-            if (withinRange(task.dueAt, rangeStart, rangeEnd)) {
+        const taskDates = [
+          { value: task.scheduledAt, isDeadline: false },
+          { value: task.startAt, isDeadline: false },
+          { value: task.targetAt, isDeadline: true },
+          { value: task.dueAt, isDeadline: true },
+          { value: task.endAt, isDeadline: true },
+        ].filter((entry) => Boolean(entry.value))
+
+        if (taskDates.length === 0) {
+          unscheduledItems.push({ kind: 'task', plan, milestone, task })
+        } else {
+          for (const entry of taskDates) {
+            if (!entry.value) continue
+            const d = parseScheduleDate(entry.value)
+            if (!d) continue
+            if (withinRange(entry.value, rangeStart, rangeEnd)) {
               scheduledItems.push({ kind: 'task', plan, milestone, task, date: d })
-            } else if (isOverdue(task.dueAt, now) && task.status !== 'complete') {
+            } else if (entry.isDeadline && isOverdue(entry.value, now) && !isTaskComplete(task)) {
               overdueItems.push({ kind: 'task', plan, milestone, task, date: d })
             }
           }
-        } else {
-          unscheduledItems.push({ kind: 'task', plan, milestone, task })
         }
       }
     }
