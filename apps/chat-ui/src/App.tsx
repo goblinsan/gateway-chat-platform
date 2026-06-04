@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useState } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
 import type { AgentListItem, AgentsListResponse } from '@gateway/shared'
@@ -7,20 +7,19 @@ import type { InboxItem } from '@gateway/shared'
 import ChatPage from './pages/ChatPage'
 import HealthPage from './pages/HealthPage'
 import AdminPage from './pages/AdminPage'
+import PlanningPage from './pages/PlanningPage'
 import Sidebar from './components/Sidebar'
 import AgentTabs from './components/AgentTabs'
 import WorkflowPanel from './components/WorkflowPanel'
 import InboxPanel from './components/InboxPanel'
 import PersonasPanel from './components/PersonasPanel'
 import UsagePanel from './components/UsagePanel'
-import PlanTrackerPanel from './components/PlanTrackerPanel'
 import ProfilePanel from './components/ProfilePanel'
 import { personaToAgentListItem } from './utils/persona'
 import { useThreads } from './hooks/useThreads'
 import { useInbox, type ChatInboxScope } from './hooks/useInbox'
 import { usePersonas } from './hooks/usePersonas'
 import { useUsage } from './hooks/useUsage'
-import { usePlans } from './hooks/usePlans'
 import { useProfile } from './hooks/useProfile'
 
 function resolveInboxScope(): ChatInboxScope {
@@ -35,6 +34,7 @@ function resolveInboxScope(): ChatInboxScope {
 }
 
 function ChatLayout() {
+  const navigate = useNavigate()
   const { data, isLoading } = useQuery<AgentsListResponse>({
     queryKey: ['agents'],
     queryFn: () => axios.get<AgentsListResponse>('/api/agents').then((r) => r.data),
@@ -43,9 +43,7 @@ function ChatLayout() {
 
   const personas = usePersonas()
   const usage = useUsage()
-  const plans = usePlans()
   const profile = useProfile()
-  const refreshPlans = plans.refresh
 
   // Merge operator agents and enabled user personas into a single list
   const agents = useMemo<AgentListItem[]>(() => {
@@ -65,7 +63,6 @@ function ChatLayout() {
   const [showInbox, setShowInbox] = useState(false)
   const [showPersonas, setShowPersonas] = useState(false)
   const [showUsage, setShowUsage] = useState(false)
-  const [showPlans, setShowPlans] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sessionUserId, setSessionUserId] = useState<string | null>(null)
@@ -124,12 +121,6 @@ function ChatLayout() {
   }, [agents, activeAgentId])
 
   const activeAgent = agents.find((a) => a.id === activeAgentId)
-
-  useEffect(() => {
-    if (showPlans) {
-      void refreshPlans()
-    }
-  }, [showPlans, refreshPlans])
 
   useEffect(() => {
     if (showProfile) {
@@ -215,7 +206,7 @@ function ChatLayout() {
         onWorkflows={() => setShowWorkflows((v) => !v)}
         unreadCount={inbox.unreadCount}
         onInbox={() => setShowInbox((value) => !value)}
-        onPlans={() => { setShowPlans((v) => !v); setSidebarOpen(false) }}
+        onPlans={() => { navigate('/planning'); setSidebarOpen(false) }}
         onProfile={() => { setShowProfile((v) => !v); setSidebarOpen(false) }}
         onPersonas={() => { setShowPersonas((v) => !v); setSidebarOpen(false) }}
         onUsage={() => { setShowUsage((v) => !v); setSidebarOpen(false) }}
@@ -243,10 +234,10 @@ function ChatLayout() {
           </button>
           <button
             type="button"
-            onClick={() => setShowPlans((value) => !value)}
+            onClick={() => navigate('/planning')}
             className="px-2.5 py-1 border border-gray-700 text-xs text-gray-300"
           >
-            Plans
+            Planning
           </button>
           <button
             type="button"
@@ -284,7 +275,6 @@ function ChatLayout() {
           onUpdateMessageTtsAudio={updateMessageTtsAudio}
           onSetThreadTtsEnabled={setThreadTtsEnabled}
           onSetThreadDefaultModel={setThreadDefaultModel}
-          onPlansPossiblyChanged={() => { void refreshPlans() }}
         />
         {showWorkflows && (
           <WorkflowPanel agents={agents} onClose={() => setShowWorkflows(false)} />
@@ -328,26 +318,6 @@ function ChatLayout() {
         onRefresh={(hours) => { void usage.refresh(hours) }}
         onClose={() => setShowUsage(false)}
       />
-      <PlanTrackerPanel
-        isOpen={showPlans}
-        plans={plans.plans}
-        loading={plans.loading}
-        error={plans.error}
-        onRefresh={plans.refresh}
-        onCreatePlan={plans.create}
-        onImportPlan={plans.importDocument}
-        onExportPlan={plans.exportDocument}
-        onPatchPlan={plans.patchPlan}
-        onDeletePlan={plans.remove}
-        onAddMilestone={plans.addMilestone}
-        onUpdateMilestoneStatus={plans.updateMilestoneStatus}
-        onDeleteMilestone={plans.removeMilestone}
-        onAddTask={plans.addTask}
-        onUpdateTaskStatus={plans.updateTaskStatus}
-        onPatchTask={plans.patchTask}
-        onDeleteTask={plans.removeTask}
-        onClose={() => setShowPlans(false)}
-      />
       <ProfilePanel
         isOpen={showProfile}
         profile={profile.profile}
@@ -366,6 +336,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<ChatLayout />} />
+      <Route path="/planning" element={<PlanningPage />} />
       <Route path="/health" element={<HealthPage />} />
       <Route path="/admin" element={<AdminPage />} />
     </Routes>

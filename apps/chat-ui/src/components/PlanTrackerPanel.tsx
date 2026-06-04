@@ -14,6 +14,10 @@ interface PlanTrackerPanelProps {
   plans: PlanGoal[]
   loading: boolean
   error: string | null
+  variant?: 'panel' | 'workspace'
+  title?: string
+  subtitle?: string
+  closeLabel?: string
   onRefresh: () => Promise<void>
   onClose: () => void
   onCreatePlan: (input: { title: string; vision?: string }) => Promise<void>
@@ -139,6 +143,10 @@ export default function PlanTrackerPanel({
   plans,
   loading,
   error,
+  variant = 'panel',
+  title = 'Plans',
+  subtitle = 'Project dashboard backed by durable agent-service plan state',
+  closeLabel = 'Close',
   onRefresh,
   onClose,
   onCreatePlan,
@@ -172,6 +180,10 @@ export default function PlanTrackerPanel({
   }, [editingPlanId, plans])
 
   if (!isOpen) return null
+
+  const containerClassName = variant === 'workspace'
+    ? 'mx-auto flex h-full w-full max-w-6xl min-w-0 flex-1 flex-col overflow-hidden border-x border-gray-800 bg-gray-900/80'
+    : 'flex w-full flex-col border-l border-gray-800 bg-gray-900/95 backdrop-blur-sm md:w-[34rem]'
 
   const handleCreatePlan = async () => {
     const title = window.prompt('Goal title')
@@ -369,11 +381,11 @@ export default function PlanTrackerPanel({
   )
 
   return (
-    <aside className="flex w-full flex-col border-l border-gray-800 bg-gray-900/95 backdrop-blur-sm md:w-[34rem]">
+    <section className={containerClassName}>
       <div className="flex items-center justify-between gap-3 border-b border-gray-800 px-4 py-4">
         <div>
-          <p className="text-sm font-semibold text-gray-100">Plans</p>
-          <p className="text-xs text-gray-500">Project dashboard backed by durable agent-service plan state</p>
+          <p className="text-sm font-semibold text-gray-100">{title}</p>
+          <p className="text-xs text-gray-500">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -430,7 +442,7 @@ export default function PlanTrackerPanel({
             onClick={onClose}
             className="px-3 py-1.5 text-xs border border-gray-700 text-gray-300 hover:border-gray-600 hover:text-white transition-colors"
           >
-            Close
+            {closeLabel}
           </button>
         </div>
       </div>
@@ -777,6 +789,6 @@ export default function PlanTrackerPanel({
           )
         })}
       </div>
-    </aside>
+    </section>
   )
 }

@@ -158,7 +158,7 @@ const Sidebar = React.memo(function Sidebar({
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-400 hover:bg-gray-800 hover:text-white transition-colors mt-1"
         >
           <span className="text-base" aria-hidden="true">🎯</span>
-          Plans
+          Planning
         </button>
         <button
           onClick={onProfile}
